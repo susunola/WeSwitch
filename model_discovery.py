@@ -36,9 +36,15 @@ def valid_token(value):
     return value
 
 
-def resolve_request(store, payload):
+def resolve_credentials(store, payload, consent_message):
+    """Resolve an explicit, endpoint-bound credential. Returns (base_url, secret).
+
+    Shared by the read-only model list and the one-shot connection test so both
+    follow the same never-reuse-a-secret-on-another-address rule. The caller
+    supplies the consent message, because only it knows which button was pressed.
+    """
     if not isinstance(payload, dict) or payload.get("confirmed") is not True:
-        raise ConfigError("请确认目标地址并点击获取模型列表，才会发送请求。", "confirmation_required")
+        raise ConfigError(consent_message, "confirmation_required")
     base = validate_url(text(payload, "base_url", 2048))
     if urlsplit(base).path.rstrip("/").endswith("/models"):
         raise ConfigError("请填写 API 基础地址，不要包含 /models；本工具会自动拼接。")
@@ -53,10 +59,10 @@ def resolve_request(store, payload):
     if mode == "none":
         if urlsplit(base).hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ConfigError("无认证模式仅限本机服务。远程服务请选择认证方式。")
-        return base + "/models", ""
+        return base, ""
     if mode == "keychain" and secret:
         # Brand-new entries can be queried before choosing an ID/name/model or saving anything.
-        return base + "/models", valid_token(secret)
+        return base, valid_token(secret)
     provider_id = text(payload, "provider_id", 64)
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id):
         raise ConfigError("要复用凭据，请填写有效的已保存提供方 ID。")
@@ -89,7 +95,7 @@ def resolve_request(store, payload):
             raise ConfigError("配置工具进程中没有这个环境变量。可切换钥匙串模式临时填写 Key，或继续手动填写模型 ID。", "credential_missing")
     if store.snapshot()[1] != revision:
         raise ConfigError("读取凭据期间配置发生变化，未发出请求；请刷新状态后重试。", "conflict", 409)
-    return base + "/models", valid_token(secret)
+    return base, valid_token(secret)
 
 
 def parse_models(raw, secret=""):
@@ -194,8 +200,11 @@ def fetch_models(endpoint, secret):
         raise ConfigError("无法连接模型列表接口。请检查地址、网络或 TLS 证书；本工具不会跳过证书校验。", "models_network", 502) from None
 
 
+CONSENT_MESSAGE = "请确认目标地址并点击获取模型列表，才会发送请求。"
+
+
 def discover_models(store, payload):
-    endpoint, secret = resolve_request(store, payload)
-    result = fetch_models(endpoint, secret)
-    result["endpoint"] = endpoint
+    base, secret = resolve_credentials(store, payload, CONSENT_MESSAGE)
+    result = fetch_models(base + "/models", secret)
+    result["endpoint"] = base + "/models"
     return result

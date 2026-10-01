@@ -6,6 +6,7 @@ import ctypes
 import hashlib
 import http.client
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -849,8 +850,11 @@ requires_openai_auth = true # Preserve the existing OpenAI authentication.
         self.assertNotIn("model_catalog_json", tomllib.loads(self.path.read_text()))
         before = self.tree_snapshot()
         state = self.store.state()
-        self.assertEqual(state["catalog"], {"path": None, "count": 0, "preserved": True})
+        self.assertEqual(state["catalog"], {"path": None, "count": 0, "preserved": True, "source": None})
         self.assertIsNone(json.loads(json.dumps(state))["catalog"]["path"])
+        # No model_catalog_json and no models.json: the merge source is absent, so the
+        # UI must not offer "write model catalog" rather than hide the built-in models.
+        self.assertIsNone(state["catalog"]["source"])
         self.assertEqual(state["current"]["model"], "original-model")
         self.assertEqual(state["revision"], hashlib.sha256(original).hexdigest())
         form = self.form()
@@ -1257,6 +1261,163 @@ class HTTPTests(ConfigFixture):
                 self.assertEqual(status, 404)
                 self.assertEqual(data["code"], "not_found")
         self.assertEqual(self.path.read_bytes(), ORIGINAL)
+
+
+class CatalogTests(ConfigFixture):
+    """Merging into `model_catalog_json`, the file the desktop picker renders."""
+
+    def test_relative_catalog_path_resolves_under_the_codex_home_not_the_working_directory(self):
+        # Regression: this fixture declares a relative path. Resolving it against the
+        # process working directory found no catalog and refused every merge.
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory(prefix="codex-catalog-cwd-", dir="/tmp") as elsewhere:
+            os.chdir(elsewhere)
+            self.addCleanup(os.chdir, cwd)
+            preview = self.store.preview(self.form(write_catalog=True))
+        self.assertEqual(preview["catalog"]["source_path"], str(self.catalog))
+        self.assertEqual(preview["catalog"]["source_count"], 1)
+        self.assertEqual(preview["catalog"]["added"], ["new-model"])
+        self.assertEqual(preview["catalog"]["path"], str(self.home / "models.json"))
+
+    def test_write_catalog_preview_describes_the_merge_without_writing_a_file(self):
+        before = self.tree_snapshot()
+        with mock.patch.object(core, "atomic_write", side_effect=AssertionError("Preview wrote a file")):
+            preview = self.store.preview(self.form(write_catalog=True))
+        self.assertEqual(self.tree_snapshot(), before)
+        self.assertFalse((self.home / "models.json").exists())
+        self.assertIn("合并写入新的模型目录；原始目录文件保留在备份中", preview["changes"])
+        self.assertIn("写入模型目录：" + str(self.home / "models.json"), preview["changes"])
+        self.assertIn("model_catalog_json", preview["snippet"])
+        # The preview shows only what would be added, never the whole catalog.
+        self.assertEqual(preview["catalog"]["preview"].count('"slug": "new-model"'), 1)
+
+    def test_write_catalog_apply_merges_after_existing_entries_and_backs_up_the_source(self):
+        _, result = self.commit(self.form(write_catalog=True))
+        merged = json.loads((self.home / "models.json").read_bytes())
+        self.assertEqual([m["slug"] for m in merged["models"]], ["original-model", "new-model"])
+        # Existing entries are copied byte-for-byte; only `models` is carried over,
+        # matching the shape vendors ship. Unknown top-level keys are not invented.
+        self.assertEqual(merged["models"][0], {"slug": "original-model", "extra": [1, 2]})
+        self.assertEqual(set(merged), {"models"})
+        self.assertEqual(result["catalog"]["added"], ["new-model"])
+        self.assertEqual(result["catalog"]["count"], 2)
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertEqual(parsed["model_catalog_json"], str(self.home / "models.json"))
+        backup = Path(result["backup_path"])
+        self.assertEqual((backup / "catalog-source.json").read_bytes(), CATALOG)
+        self.assertFalse((backup / "catalog-target.json").exists())
+        manifest = json.loads((backup / "manifest.json").read_text())
+        self.assertIsNone(manifest["catalog"]["before_sha256"])
+        self.assertEqual(manifest["catalog"]["after_sha256"],
+                         hashlib.sha256((self.home / "models.json").read_bytes()).hexdigest())
+        self.assertEqual(manifest["catalog"]["backups"], ["catalog-source.json"])
+
+    def test_write_catalog_reports_models_that_already_exist_instead_of_overwriting_them(self):
+        preview, result = self.commit(self.form(write_catalog=True, model="original-model"))
+        self.assertEqual(result["catalog"]["added"], [])
+        self.assertEqual(result["catalog"]["skipped"], ["original-model"])
+        merged = json.loads((self.home / "models.json").read_bytes())
+        self.assertEqual(merged["models"], [{"slug": "original-model", "extra": [1, 2]}])
+        self.assertIn("这些模型 ID 已在目录中，保留原有条目：original-model", preview["warnings"])
+
+    def test_write_catalog_is_refused_when_there_is_no_catalog_to_merge(self):
+        # Never create a catalog holding only custom models: it would hide the
+        # built-in models in the picker, which is the regression this must avoid.
+        self.path.write_bytes(ORIGINAL.replace(b'"model_catalog.json"', b'"missing-catalog.json"'))
+        error = self.assert_error(lambda: self.store.preview(self.form(write_catalog=True)),
+                                  "catalog_unavailable")
+        self.assertIn("官方模型", str(error))
+
+    def test_without_write_catalog_the_catalog_is_preserved_and_the_gap_is_disclosed(self):
+        preview, result = self.commit(self.form(write_catalog=False))
+        self.assertFalse((self.home / "models.json").exists())
+        self.assertIsNone(result["catalog"])
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertEqual(parsed["model_catalog_json"], "model_catalog.json")
+        self.assertTrue(any("new-model" in w and "不在现有本地目录中" in w for w in preview["warnings"]))
+
+    def test_write_catalog_widens_the_desktop_effort_list_when_one_exists(self):
+        self.path.write_bytes(ORIGINAL + b'[desktop]\nenabled-reasoning-efforts = ["medium"]\n')
+        preview, _ = self.commit(self.form(write_catalog=True, reasoning_effort="max"))
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertEqual(parsed["desktop"]["enabled-reasoning-efforts"], list(core.REASONING_EFFORTS))
+        self.assertIn("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。", preview["changes"])
+
+    def test_write_catalog_discloses_a_missing_desktop_table_instead_of_inventing_one(self):
+        preview, _ = self.commit(self.form(write_catalog=True))
+        self.assertNotIn("desktop", tomllib.loads(self.path.read_text()))
+        self.assertTrue(any("配置中没有 [desktop] 表" in w for w in preview["warnings"]))
+
+
+class LoginModeTests(ConfigFixture):
+    """`preferred_auth_method` / `forced_login_method`: the official API-key login switch."""
+
+    def test_force_api_login_writes_both_login_keys(self):
+        preview, _ = self.commit(self.form(force_api_login=True))
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertEqual(parsed["preferred_auth_method"], "apikey")
+        self.assertEqual(parsed["forced_login_method"], "api")
+        self.assertIn("写入 preferred_auth_method 与 forced_login_method，启动后直接使用 API Key 登录。",
+                      preview["changes"])
+        self.assertTrue(any("ChatGPT" in w for w in preview["warnings"]))
+
+    def test_force_api_login_leaves_the_config_alone_when_not_requested(self):
+        self.commit(self.form(force_api_login=False))
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertNotIn("preferred_auth_method", parsed)
+        self.assertNotIn("forced_login_method", parsed)
+
+    def test_force_api_login_is_refused_without_a_credential(self):
+        self.assert_error(lambda: self.store.preview(
+            self.form(auth_mode="none", env_key="", force_api_login=True)))
+
+
+class RestoreTests(ConfigFixture):
+    """Rollback of one applied backup; the restore is itself backed up first."""
+
+    def test_restore_returns_the_backed_up_bytes_and_is_itself_reversible(self):
+        _, applied = self.commit()
+        backup_id = Path(applied["backup_path"]).name
+        self.assertIn(backup_id, {b["id"] for b in self.store.state()["backups"]})
+        applied_bytes = self.path.read_bytes()
+        restored = self.store.restore({"confirmed": True, "backup_id": backup_id})
+        self.assertTrue(restored["ok"])
+        self.assertEqual(restored["backup_id"], backup_id)
+        self.assertEqual(restored["config_path"], str(self.path))
+        self.assertFalse(restored["catalog_restored"])
+        self.assertEqual(self.path.read_bytes(), ORIGINAL)
+        # The discarded state is kept, so the restore can itself be undone.
+        safety = self.home / "model-ui-backups" / restored["safety_backup"]
+        self.assertEqual((safety / "config.toml").read_bytes(), applied_bytes)
+        manifest = json.loads((safety / "manifest.json").read_text())
+        self.assertFalse(manifest["applied"])
+        self.assertEqual(manifest["before_sha256"], hashlib.sha256(applied_bytes).hexdigest())
+        self.assertEqual(manifest["after_sha256"], hashlib.sha256(ORIGINAL).hexdigest())
+
+    def test_restore_rolls_back_the_catalog_it_wrote(self):
+        _, applied = self.commit(self.form(write_catalog=True))
+        backup_id = Path(applied["backup_path"]).name
+        restored = self.store.restore({"confirmed": True, "backup_id": backup_id})
+        self.assertTrue(restored["catalog_restored"])
+        self.assertEqual(self.path.read_bytes(), ORIGINAL)
+        self.assertEqual((self.home / "models.json").read_bytes(), CATALOG)
+        self.assertEqual(self.catalog.read_bytes(), CATALOG)
+
+    def test_restore_requires_confirmation_and_a_real_applied_backup(self):
+        self.assert_error(lambda: self.store.restore({"backup_id": "x"}), "confirmation_required")
+        self.assert_error(lambda: self.store.restore({"confirmed": True, "backup_id": "x"}),
+                          "invalid_backup")
+        self.assert_error(lambda: self.store.restore(
+            {"confirmed": True, "backup_id": "20260101T000000Z-deadbeef"}), "invalid_backup")
+        self.assertEqual(self.path.read_bytes(), ORIGINAL)
+
+    def test_restore_rejects_a_backup_whose_bytes_do_not_match_its_manifest(self):
+        _, applied = self.commit()
+        backup_id = Path(applied["backup_path"]).name
+        (self.home / "model-ui-backups" / backup_id / "config.toml").write_bytes(b"# tampered\n")
+        self.assert_error(lambda: self.store.restore({"confirmed": True, "backup_id": backup_id}),
+                          "invalid_backup")
+        self.assertNotEqual(self.path.read_bytes(), b"# tampered\n")
 
 
 if __name__ == "__main__":

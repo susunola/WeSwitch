@@ -35,7 +35,8 @@
         const fields = form.elements;
         const inputs = ['provider_id', 'name', 'base_url', 'model', 'api_key', 'env_key'];
         const authModes = new Set(['keychain', 'env', 'none']);
-        const efforts = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+        // Taken from the codex-cli reasoning-effort enum; not invented here.
+        const efforts = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent']);
         let state = null;
         let stateReady = false;
         let stateLoading = false;
@@ -49,9 +50,16 @@
         let activeProvider = null;
         let sessionAllowed = false;
         const discoveryFields = ['provider_id', 'base_url', 'auth_mode', 'env_key', 'api_key'];
+        // The connection test also sends a model ID, so it belongs to the snapshot.
+        const connectionFields = [...discoveryFields, 'model'];
         let modelsController = null;
         let modelsLoading = false;
         let models = [];
+        let connectionController = null;
+        let connectionLoading = false;
+        let rollbackLoading = false;
+        let catalogAuto = false;
+        let loginAllowed = true;
 
         function modelsEndpoint() {
           const url = new URL(fields.base_url.value.trim());
@@ -72,6 +80,75 @@
         function setModelsStatus(message, tone = 'neutral') {
           text('models-status', message);
           $('models-status').dataset.tone = tone;
+        }
+
+        // Codex has one wire protocol, so there is nothing to choose here. The only
+        // question worth asking is whether this address answers POST /responses.
+        function connectionEndpoint() {
+          const url = new URL(fields.base_url.value.trim());
+          if (!(url.protocol === 'https:' || (url.protocol === 'http:' && isLoopback(url.hostname))) ||
+              url.username || url.password || url.search || url.hash) throw new Error('INVALID_ENDPOINT');
+          url.pathname = url.pathname.replace(/\/+$/, '') + '/responses';
+          return url;
+        }
+
+        function syncConnectionEndpoint() {
+          try {
+            text('connection-endpoint', raw('POST ' + connectionEndpoint().href));
+          } catch (_) {
+            text('connection-endpoint', '填写有效 API 地址后显示 POST …/responses；不要在地址中包含凭据或查询参数。');
+          }
+        }
+
+        function setConnectionStatus(message, tone = 'neutral') {
+          text('connection-status', message);
+          $('connection-status').dataset.tone = tone;
+        }
+
+        function setBackupStatus(message, tone = 'neutral') {
+          text('backup-status', message);
+          $('backup-status').dataset.tone = tone;
+        }
+
+        function resetConnection() {
+          const wasLoading = connectionLoading;
+          if (connectionController) connectionController.abort();
+          connectionController = null;
+          connectionLoading = false;
+          fillList($('connection-warnings'), []);
+          $('connection-warnings').hidden = true;
+          setConnectionStatus(wasLoading
+            ? '已停止等待上一次测试。已发送的请求无法撤回，旧结果会被忽略；新地址或凭据需重新确认。'
+            : '尚未测试当前设置。仅点击测试连接并确认后发送请求；这是本工具唯一会调用模型生成的动作。');
+          syncConnectionEndpoint();
+          updateControls();
+        }
+
+        function syncCatalogOption() {
+          // Without an existing catalog there is nothing to merge into, and writing a
+          // catalog that only holds custom models would hide the built-in ones.
+          const available = Boolean(stateReady && state?.catalog?.source);
+          if (!catalogAuto || !available) {
+            $('write_catalog').checked = available;
+            catalogAuto = available;
+          }
+          $('write_catalog').disabled = !available;
+          text('write-catalog-note', available
+            ? '桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。'
+            : '本机没有找到现有模型目录（model_catalog_json 未设置，也没有 models.json）。为避免官方模型从选择器中消失，本工具不新建只含自定义模型的目录。');
+        }
+
+        function syncLoginOption() {
+          // Forcing API-key login needs a credential to log in with; in no-auth mode
+          // there is none, so the switch is cleared rather than previewed and rejected.
+          const allowed = fields.auth_mode.value !== 'none';
+          if (!allowed) $('force_api_login').checked = false;
+          else if (allowed !== loginAllowed) $('force_api_login').checked = true;
+          loginAllowed = allowed;
+          $('force_api_login').disabled = !allowed;
+          text('force-api-login-note', allowed
+            ? '写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。'
+            : '无认证模式没有可用于登录的凭据，因此不写入登录方式。');
         }
 
         // One model ID per line; duplicates are collapsed without reordering.
@@ -147,6 +224,7 @@
             ? '已停止等待旧列表。已发送的请求无法撤回，旧结果会被忽略；新地址或凭据需重新确认。'
             : '尚未请求当前设置的列表。仅点击获取并确认后发送请求；也可直接手动填写模型 ID。');
           syncModelsEndpoint();
+          resetConnection();
           updateControls();
         }
 
@@ -274,6 +352,133 @@
                 updateControls();
               }
             }
+          }
+        }
+
+        function readConnectionPayload() {
+          const payload = readModelsPayload();
+          if (!payload) return null;
+          const model = defaultModel();
+          if (!model) {
+            setFieldError('model', '请先填写至少一个模型 ID；连接测试会用它发送一次最短请求。');
+            fields.model.focus();
+            setConnectionStatus('尚未发送请求。请先填写至少一个模型 ID。', 'warning');
+            return null;
+          }
+          payload.model = model;
+          return payload;
+        }
+
+        async function testConnection() {
+          if (!sessionAllowed || !stateReady || stateLoading || previewLoading || applying ||
+              modelsLoading || connectionLoading) return;
+          const payload = readConnectionPayload();
+          if (!payload) return;
+          const endpoint = connectionEndpoint().href;
+          const snapshot = connectionFields.map((name) => fields[name].value);
+          const unchanged = () => connectionFields.every((name, index) => fields[name].value === snapshot[index]);
+          const consent = message(payload.auth_mode === 'none'
+            ? '将不携带认证凭据向 {endpoint} 发送一次最短的 Responses 请求（模型 {model}，最多输出 16 个 token），用于判断该地址是否支持该协议。可能产生少量费用。是否继续？'
+            : '将使用你的凭据向 {endpoint} 发送一次最短的 Responses 请求（模型 {model}，最多输出 16 个 token），用于判断该地址是否支持该协议、凭据是否可用。可能产生少量费用。是否继续？',
+            { endpoint, model: payload.model });
+          if (!window.confirm(t(consent))) {
+            setConnectionStatus('已取消，未发送连接测试请求。可稍后重试，或预览后自行在 Codex 中验证。');
+            return;
+          }
+          if (!unchanged() || !sessionAllowed || !stateReady || stateLoading || previewLoading ||
+              applying || modelsLoading || connectionLoading) return;
+          resetConnection();
+          const controller = new AbortController();
+          connectionController = controller;
+          connectionLoading = true;
+          setConnectionStatus('正在测试连接… 这会向你填写的服务商真实发送一次最短请求，可能产生少量费用。', 'warning');
+          updateControls();
+          try {
+            const data = await api('/api/connection-test', { body: payload, signal: controller.signal, timeout: 75000 });
+            if (controller !== connectionController || controller.signal.aborted || !unchanged()) return;
+            if (typeof data.compatible !== 'boolean' || typeof data.message !== 'string' ||
+                typeof data.endpoint !== 'string' || typeof data.protocol !== 'string' ||
+                typeof data.model !== 'string' || !Number.isInteger(data.http_status) ||
+                !Number.isInteger(data.latency_ms) || !stringArray(data.warnings) ||
+                data.connection_tested !== true) {
+              throw errorFor('连接测试响应格式不完整。', 'INVALID_CONNECTION');
+            }
+            if (new URL(data.endpoint).href !== endpoint) throw errorFor('连接测试端点不一致。', 'INVALID_CONNECTION');
+            const safeWarning = (warning) => {
+              for (const secret of [payload.api_key, token]) {
+                if (secret) warning = warning.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]');
+              }
+              return warning;
+            };
+            text('connection-endpoint', raw('POST ' + endpoint));
+            fillList($('connection-warnings'), data.warnings.map(safeWarning), responseLanguages.get(data));
+            $('connection-warnings').hidden = data.warnings.length === 0;
+            const verdict = data.compatible
+              ? message('协议兼容 · HTTP {status} · {latency} ms', { status: data.http_status, latency: data.latency_ms })
+              : message('协议不兼容 · HTTP {status} · {latency} ms', { status: data.http_status, latency: data.latency_ms });
+            setConnectionStatus(concat(verdict, ' ', i18n.server(data.message, responseLanguages.get(data)),
+              ' 未保存密钥或配置；这只是一次最短请求的结果。'), data.compatible ? 'green' : 'warning');
+          } catch (error) {
+            if (controller !== connectionController || controller.signal.aborted || !unchanged()) return;
+            const reason = error.code === 'connection_timeout' ? '连接测试超时。'
+              : error.code === 'connection_network' ? '无法连接该地址。请检查地址、网络或 TLS 证书；本工具不会跳过证书校验。'
+              : error.code === 'INVALID_CONNECTION' ? '服务返回的连接测试结果格式不正确。'
+              : error.status === 429 ? '已有连接测试正在进行，请等待其完成后重试。'
+              : error.code === 'REQUEST_TIMEOUT' ? '连接测试等待超时，请稍后重试。'
+              : error.code === 'NETWORK_ERROR' ? '无法连接本地配置服务。'
+              : '未能完成连接测试，请检查地址、认证和本地服务状态。';
+            const useServerDetail = /^(connection_|credential_)/.test(error.code || '') && error.responseLanguage;
+            let detail = useServerDetail ? error.serverSource : reason;
+            for (const secret of [payload.api_key, token]) {
+              if (secret) detail = detail.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]');
+            }
+            setConnectionStatus(concat(useServerDetail ? i18n.server(detail, error.responseLanguage) : detail,
+              ' 可手动填写模型 ID 并直接预览，或稍后重试；未保存密钥或配置。'), 'warning');
+          } finally {
+            if (controller === connectionController) {
+              if (!unchanged()) resetConnection();
+              else {
+                connectionLoading = false;
+                connectionController = null;
+                updateControls();
+              }
+            }
+          }
+        }
+
+        async function rollback() {
+          if (!sessionAllowed || !stateReady || stateLoading || applying || rollbackLoading) return;
+          const backup_id = $('backup-select').value;
+          if (!backup_id) {
+            setBackupStatus('请先选择要还原的备份。当前还没有可用的备份记录。', 'warning');
+            return;
+          }
+          const consent = message('将把 {path} 还原为备份 {id}。还原前，当前配置会再存一份新备份，因此这次还原也可以再撤销。是否继续？',
+            { path: state.config_path, id: backup_id });
+          if (!window.confirm(t(consent))) {
+            setBackupStatus('已取消，未还原任何文件。');
+            return;
+          }
+          const chosen = backup_id;
+          rollbackLoading = true;
+          updateControls();
+          setBackupStatus('正在还原备份，并先为当前配置生成新备份…', 'warning');
+          try {
+            const data = await api('/api/rollback', { body: { backup_id: chosen, confirmed: true } });
+            if (data.ok !== true || typeof data.backup_id !== 'string' || typeof data.safety_backup !== 'string' ||
+                typeof data.config_path !== 'string' || typeof data.message !== 'string') {
+              throw errorFor('还原结果不完整。请刷新状态并查看备份目录。', 'INVALID_ROLLBACK');
+            }
+            setBackupStatus(concat(i18n.server(data.message, responseLanguages.get(data)),
+              ' 还原前的新备份：', raw(data.safety_backup)), 'green');
+            invalidatePlan('配置已还原，请基于最新配置重新预览。');
+            await loadState();
+          } catch (error) {
+            setBackupStatus(concat(raw(error.uiMessage || error.message),
+              ' 未还原任何文件。请刷新状态后重试。'), 'warning');
+          } finally {
+            rollbackLoading = false;
+            updateControls();
           }
         }
 
@@ -430,6 +635,9 @@
             ? '相同提供方与地址可复用已托管凭据。确认获取列表时会发送给该服务商；填写新密钥仅在应用时保存。预览不发送密钥。'
             : '请填写 API Key。确认获取列表时经本地服务发送给你填写的服务商，但不保存；仅应用时保存。预览不发送密钥。');
           syncModelsEndpoint();
+          syncConnectionEndpoint();
+          syncCatalogOption();
+          syncLoginOption();
           $('keychain-unavailable').hidden = !(stateReady && state.keychain_available === false);
           text('keychain-status', !stateReady ? '等待状态' : state.keychain_available ? '本机可用' : '本机不可用');
           $('keychain-status').dataset.tone = stateReady && state.keychain_available ? 'green' : 'neutral';
@@ -449,22 +657,31 @@
             button.disabled = !editable;
           });
           const unavailable = fields.auth_mode.value === 'keychain' && state?.keychain_available === false;
-          $('fetch-models').disabled = !editable || previewLoading || modelsLoading;
+          const busy = modelsLoading || connectionLoading;
+          $('fetch-models').disabled = !editable || previewLoading || busy;
           $('fetch-models').setAttribute('aria-busy', String(modelsLoading));
           text('fetch-models-label', modelsLoading ? '正在获取…' : '获取模型列表');
           $('models-panel').setAttribute('aria-busy', String(modelsLoading));
-          $('model-select').disabled = !editable || modelsLoading || models.length === 0;
-          $('model-search').disabled = !editable || modelsLoading || models.length === 0;
-          $('preview-button').disabled = !editable || previewLoading || modelsLoading || unavailable;
+          $('model-select').disabled = !editable || busy || models.length === 0;
+          $('model-search').disabled = !editable || busy || models.length === 0;
+          $('test-connection').disabled = !editable || previewLoading || busy;
+          $('test-connection').setAttribute('aria-busy', String(connectionLoading));
+          text('test-connection-label', connectionLoading ? '正在测试…' : '测试连接');
+          $('preview-button').disabled = !editable || previewLoading || busy || unavailable;
           $('preview-button').setAttribute('aria-busy', String(previewLoading));
           text('preview-label', previewLoading ? '正在生成预览' : '预览配置更改');
-          $('confirmation').disabled = !plan || applying || modelsLoading || !editable;
-          $('apply-button').disabled = !plan || !editable || applying || modelsLoading || !$('confirmation').checked;
+          $('confirmation').disabled = !plan || applying || busy || !editable;
+          $('apply-button').disabled = !plan || !editable || applying || busy || !$('confirmation').checked;
           $('apply-button').setAttribute('aria-busy', String(applying));
           text('apply-label', applying ? '正在备份并写入' : '确认并应用配置');
           $('cancel-preview').disabled = applying;
           form.setAttribute('aria-busy', String(applying));
           $('edit-again').disabled = applying;
+          const records = state?.backups || [];
+          $('backup-select').disabled = !editable || applying || rollbackLoading || records.length === 0;
+          $('rollback-button').disabled = !editable || applying || rollbackLoading || !$('backup-select').value;
+          $('rollback-button').setAttribute('aria-busy', String(rollbackLoading));
+          text('rollback-label', rollbackLoading ? '正在还原…' : '还原所选备份');
         }
 
         function invalidatePlan(message = '表单已更改。请重新预览，并再次确认。') {
@@ -506,6 +723,8 @@
             auth_mode: fields.auth_mode.value,
             env_key: fields.auth_mode.value === 'env' ? fields.env_key.value.trim() : '',
             set_default: fields.set_default.checked,
+            write_catalog: fields.write_catalog.checked,
+            force_api_login: fields.force_api_login.checked,
             has_key: fields.auth_mode.value === 'keychain' && fields.api_key.value.trim().length > 0
           };
           // An empty selection deliberately omits the property from both requests.
@@ -656,6 +875,8 @@
         function newProvider() {
           if (!stateReady || applying) return;
           invalidatePlan();
+          // Re-apply the catalog default instead of inheriting the previous choice.
+          catalogAuto = false;
           form.reset();
           clearSecret();
           resetFieldErrors();
@@ -696,6 +917,8 @@
           $('catalog-status').dataset.tone = state.catalog.preserved ? 'green' : 'warning';
           text('catalog-path', stringValue(state.catalog.path, '未设置自定义目录（使用内置目录）'));
           text('config-path', stringValue(state.config_path, '服务未返回配置路径'));
+          // The protocol is reported by the service, not hard-coded in this page.
+          text('protocol-value', stringValue(state.protocol, 'responses'));
           text('app-version', stringValue(state.app.version, '服务未返回'));
           text('cli-version', stringValue(state.app.cli_version, '服务未返回'));
           text('app-path', stringValue(state.app.path, '服务未返回应用路径'));
@@ -729,6 +952,20 @@
             row.append(top, path);
             backups.append(row);
           });
+          const picker = $('backup-select');
+          const chosen = picker.value;
+          picker.replaceChildren();
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          i18n.setText(placeholder, state.backups.length ? '选择要还原的备份' : '暂无可用备份');
+          picker.append(placeholder);
+          state.backups.forEach((backup) => {
+            const option = document.createElement('option');
+            option.value = backup.id;
+            option.textContent = backup.id + '  ·  ' + backup.created;
+            picker.append(option);
+          });
+          picker.value = state.backups.some((backup) => backup.id === chosen) ? chosen : '';
           syncAuth();
         }
 
@@ -931,6 +1168,8 @@
         function handleInput(event) {
           if (applying || event.target.id === 'model-search' || event.target.id === 'model-select') return;
           if (discoveryFields.includes(event.target.name)) resetModels();
+          // A test result describes one model at one address; any change invalidates it.
+          else if (event.target.name === 'model') resetConnection();
           if (event.target.name === 'model') syncDefaultModelOptions();
           invalidatePlan();
           clearError();
@@ -947,6 +1186,9 @@
         }
 
         $('fetch-models').addEventListener('click', fetchModels);
+        $('test-connection').addEventListener('click', testConnection);
+        $('backup-select').addEventListener('change', updateControls);
+        $('rollback-button').addEventListener('click', rollback);
         $('model-search').addEventListener('input', renderModelOptions);
         $('model-search').addEventListener('keydown', (event) => {
           if (event.key === 'Enter') event.preventDefault();
@@ -959,7 +1201,7 @@
         form.addEventListener('reset', () => {
           resetModels();
           invalidatePlan('表单已重置，请重新预览。');
-          queueMicrotask(syncModelsEndpoint);
+          queueMicrotask(() => syncModelsEndpoint());
         });
         form.addEventListener('submit', preview);
         form.addEventListener('input', handleInput);
@@ -1226,6 +1468,22 @@
     #models-warnings { margin-top: 8px; }
     #models-panel { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
     #model-search { margin-bottom: 12px; }
+    .protocol-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .protocol-name { font-size: 11px; font-weight: 600; }
+    .protocol-row code { font-size: 10px; padding: 3px 8px; border: 1px solid #dde4d2; background: #f5f7f0; border-radius: 5px; }
+    .connection-block { margin-top: 12px; padding: 12px 13px; background: #f5f7f0; border: 1px solid #e3e8d9; border-radius: 8px; overflow-wrap: anywhere; }
+    .connection-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+    #test-connection { flex: 0 0 auto; white-space: nowrap; padding-inline: 11px; }
+    #connection-endpoint { margin-top: 7px; }
+    #connection-status[data-tone="warning"] { color: var(--amber); }
+    #connection-status[data-tone="green"] { color: var(--green); }
+    #connection-warnings { margin-top: 8px; }
+    #backup-select { margin-top: 11px; font-size: 11px; height: 37px; }
+    #backup-hint { margin-top: 7px; }
+    #rollback-button { width: 100%; margin-top: 10px; }
+    #backup-status { margin-top: 8px; }
+    #backup-status[data-tone="warning"] { color: var(--amber); }
+    #backup-status[data-tone="green"] { color: var(--green); }
     .form-section-divider { margin: 23px 0 20px; height: 1px; background: var(--line); }
     .section-caption { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
     .section-caption h3 { font-size: 11px; font-weight: 600; }
@@ -1526,7 +1784,10 @@
                 <div data-i18n class="form-grid">
                   <div data-i18n class="field"><label data-i18n class="field-label" for="name">提供方名称<code>name</code></label><input id="name" name="name" type="text" data-i18n-placeholder placeholder="例如：我的模型服务" required aria-describedby="name-error" autocomplete="off"><p data-i18n id="name-error" class="field-error" hidden></p></div>
                   <div data-i18n class="field"><label data-i18n class="field-label" for="provider_id">提供方 ID<code>provider_id</code></label><input id="provider_id" name="provider_id" class="mono" type="text" value="custom" data-i18n-placeholder placeholder="custom" pattern="[a-z0-9_-]+" spellcheck="false" autocapitalize="none" aria-describedby="provider-id-hint provider_id-error"><p data-i18n id="provider-id-hint" class="field-hint">小写字母、数字、_ 或 -；留空使用 custom。</p><p data-i18n id="provider_id-error" class="field-error" hidden></p></div>
-                  <div data-i18n class="field full"><label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p></div>
+                  <div data-i18n class="field full"><label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p>
+                    <div data-i18n class="protocol-row"><span data-i18n class="protocol-name">接口协议</span><code data-i18n id="protocol-value">responses</code><span data-i18n class="pill">Codex 唯一支持</span></div>
+                    <p data-i18n id="protocol-hint" class="field-hint">Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。</p>
+                  </div>
                   <div data-i18n class="field full">
                     <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
                     <div data-i18n class="model-input-row">
@@ -1554,13 +1815,20 @@
                         <p data-i18n id="models-filter-status" class="field-hint" role="status" aria-live="polite"></p>
                       </div>
                     </div>
+                    <div data-i18n class="connection-block">
+                      <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n class="protocol-name">连接与协议检查</span></div>
+                      <p data-i18n id="connection-consent" class="field-hint">测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
+                      <code data-i18n id="connection-endpoint" class="file-path">填写 API 地址后显示 POST …/responses。</code>
+                      <p data-i18n id="connection-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未测试。仅点击测试连接并确认后发送请求；也可直接预览后自行验证。</p>
+                      <ul id="connection-warnings" class="change-list" data-i18n-aria-label aria-label="连接测试提示" hidden></ul>
+                    </div>
                   </div>
                 </div>
                 <div data-i18n class="form-section-divider"></div>
                 <div data-i18n class="section-caption"><h3 data-i18n><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>认证与运行选项</h3><span data-i18n class="pill" id="keychain-status">等待状态</span></div>
                 <div data-i18n class="form-grid">
                   <div data-i18n class="field"><label data-i18n class="field-label" for="auth_mode">认证方式<code>auth_mode</code></label><select id="auth_mode" name="auth_mode" aria-describedby="auth-hint"><option data-i18n value="keychain" selected>本地 Keychain（推荐）</option><option data-i18n value="env">环境变量</option><option data-i18n value="none">无认证</option></select><p data-i18n id="auth-hint" class="field-hint">密钥值不写入 TOML 配置。</p></div>
-                  <div data-i18n class="field"><label data-i18n class="field-label" for="reasoning_effort">推理强度<code>reasoning_effort</code></label><select id="reasoning_effort" name="reasoning_effort" aria-describedby="effort-hint"><option data-i18n value="" selected>不指定（不发送此字段）</option><option data-i18n value="none">无（none）</option><option data-i18n value="minimal">最小（minimal）</option><option data-i18n value="low">低（low）</option><option data-i18n value="medium">中（medium）</option><option data-i18n value="high">高（high）</option><option data-i18n value="xhigh">极高（xhigh）</option></select><p data-i18n id="effort-hint" class="field-hint">仅选择目标模型支持的级别。</p></div>
+                  <div data-i18n class="field"><label data-i18n class="field-label" for="reasoning_effort">推理强度<code>reasoning_effort</code></label><select id="reasoning_effort" name="reasoning_effort" aria-describedby="effort-hint"><option data-i18n value="" selected>不指定（不发送此字段）</option><option data-i18n value="none">无（none）</option><option data-i18n value="minimal">最小（minimal）</option><option data-i18n value="low">低（low）</option><option data-i18n value="medium">中（medium）</option><option data-i18n value="high">高（high）</option><option data-i18n value="xhigh">极高（xhigh）</option><option data-i18n value="max">最高（max）</option><option data-i18n value="ultra">极致（ultra）</option><option data-i18n value="persistent">持续（persistent）</option></select><p data-i18n id="effort-hint" class="field-hint">仅选择目标模型支持的级别；取值来自 codex-cli 的推理强度枚举。</p></div>
                 </div>
                 <div data-i18n class="auth-details" id="keychain-fields">
                   <label data-i18n class="field-label" for="api_key">API Key<span data-i18n id="api-key-optional" class="field-tag">必填</span><code>api_key</code></label>
@@ -1570,16 +1838,19 @@
                 </div>
                 <div data-i18n class="auth-details" id="env-fields" hidden><label data-i18n class="field-label" for="env_key">环境变量名<code>env_key</code></label><input id="env_key" name="env_key" class="mono" type="text" data-i18n-placeholder placeholder="OPENAI_API_KEY" spellcheck="false" autocapitalize="none" aria-describedby="env-key-hint env_key-error" disabled><p data-i18n id="env-key-hint" class="field-hint">仅填写变量名称，不设置变量。获取列表只允许已保存且提供方 ID、API 地址、变量名均匹配的配置，并从本地服务进程环境读取凭据；启动 Codex 的环境也须能读取该变量。</p><p data-i18n id="env_key-error" class="field-error" hidden></p></div>
                 <p data-i18n class="inline-note auth-details" id="no-auth-note" hidden>此模式不保存或发送认证凭据。仅适用于无需认证的服务；确认获取列表会请求 /models，但不会测试模型生成。</p>
-                <div data-i18n class="default-choice"><input type="checkbox" id="set_default" name="set_default" checked><label data-i18n for="set_default">设为 Codex 默认模型<span data-i18n>更新默认提供方与模型；不修改原始模型目录。</span></label></div>
+                <div data-i18n class="default-choice"><input type="checkbox" id="set_default" name="set_default" checked><label data-i18n for="set_default">设为 Codex 默认模型<span data-i18n>更新默认提供方与模型。</span></label></div>
+                <div data-i18n class="default-choice"><input type="checkbox" id="write_catalog" name="write_catalog" checked><label data-i18n for="write_catalog">写入模型目录<span data-i18n id="write-catalog-note">桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。</span></label></div>
+                <div data-i18n class="default-choice"><input type="checkbox" id="force_api_login" name="force_api_login" checked><label data-i18n for="force_api_login">强制 API Key 登录<span data-i18n id="force-api-login-note">写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。</span></label></div>
               </div>
             </fieldset>
             <div data-i18n class="form-footer"><p data-i18n class="form-footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n>预览不写入文件，也不发送密钥。</span></p><button data-i18n class="button primary" id="preview-button" type="submit" disabled><span data-i18n id="preview-label">预览配置更改</span><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button></div>
           </form>
         </section>
         <aside class="context-column" data-i18n-aria-label aria-label="配置说明">
-          <section class="guide-card"><div data-i18n class="guide-top"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg><h2 data-i18n>更改之前，心中有数</h2></div><ol class="guide-list"><li data-i18n class="guide-item"><span data-i18n class="guide-index">01</span><div data-i18n><h3 data-i18n>只改需要改的配置</h3><p data-i18n>预览准确的文件路径与 TOML 变更片段，不替换或扩写原始模型目录。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">02</span><div data-i18n><h3 data-i18n>由你确认，先备份再写入</h3><p data-i18n>核对更改并明确勾选确认后，才能应用。完成后展示实际备份目录。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">03</span><div data-i18n><h3 data-i18n>保存工作，手动重启</h3><p data-i18n>使用 ⌘Q 完全退出 Codex 后重新打开。已有会话不保证沿用新配置。</p></div></li></ol><div data-i18n class="guide-foot">预览 → 确认 → 应用</div></section>
-          <section class="card context-card"><h3 data-i18n>原始目录，保持原样<span data-i18n class="pill">只读</span></h3><p data-i18n>目录记录数以本地服务为准。配置成功不保证模型出现在 Codex 模型选择器中。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
-          <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；不调用模型生成。列表成功不证明 Responses API 兼容性，配置成功也不代表模型可用。</p></div>
+          <section class="guide-card"><div data-i18n class="guide-top"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg><h2 data-i18n>更改之前，心中有数</h2></div><ol class="guide-list"><li data-i18n class="guide-item"><span data-i18n class="guide-index">01</span><div data-i18n><h3 data-i18n>只改需要改的配置</h3><p data-i18n>预览准确的文件路径、TOML 变更片段，以及是否新建合并后的模型目录文件。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">02</span><div data-i18n><h3 data-i18n>由你确认，先备份再写入</h3><p data-i18n>核对更改并明确勾选确认后，才能应用。完成后展示实际备份目录。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">03</span><div data-i18n><h3 data-i18n>保存工作，手动重启</h3><p data-i18n>使用 ⌘Q 完全退出 Codex 后重新打开。已有会话不保证沿用新配置。</p></div></li></ol><div data-i18n class="guide-foot">预览 → 确认 → 应用</div></section>
+          <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器只渲染目录条目。勾选“写入模型目录”才会把你的模型合并进去；原始目录文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
+          <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
+          <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
         </aside>
       </div>
 
@@ -1609,7 +1880,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">只展示本地服务返回的备份，不执行恢复或删除操作。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.2.0</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.3.0</span></footer>
     </main>
   </div>
 </body>

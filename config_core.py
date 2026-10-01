@@ -25,6 +25,13 @@ from keychain import Keychain, KeychainError, SERVICE
 MAX_MODELS_PER_PROVIDER = 100
 # Codex profiles are the supported way to keep several models under one provider.
 PROFILE_KEYS = ("model", "model_provider", "model_reasoning_effort")
+# The only wire protocol Codex accepts. `wire_api = "chat"` was removed from
+# codex-cli, so there is no protocol to choose; only base_url may differ.
+WIRE_API = "responses"
+# Evidence: the codex-cli 0.159.2 binary serializes its reasoning-effort enum as
+# none/minimal/low/medium/high/xhigh/max/ultra/persistent, in that order. Anything
+# outside this set is rejected by Codex before it ever reaches the provider.
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent")
 
 
 class ConfigError(Exception):
@@ -153,7 +160,7 @@ def normalize(payload):
     if auth_mode == "env" and not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", env_key):
         raise ConfigError("环境变量名仅使用大写字母、数字和下划线，且不能以数字开头。")
     effort = text(payload, "reasoning_effort", 20, False)
-    if effort not in {"", "none", "minimal", "low", "medium", "high", "xhigh"}:
+    if effort not in ("", *REASONING_EFFORTS):
         raise ConfigError("不支持的推理强度。")
     for key in ("set_default", "has_key"):
         if type(payload.get(key, True if key == "set_default" else False)) is not bool:
@@ -161,6 +168,14 @@ def normalize(payload):
     save_profiles = payload.get("save_profiles", True)
     if type(save_profiles) is not bool:
         raise ConfigError("字段 save_profiles 必须为布尔值。")
+    # Older clients omit both flags, so the default is off for them.
+    write_catalog = payload.get("write_catalog", False)
+    force_api_login = payload.get("force_api_login", False)
+    for key in ("write_catalog", "force_api_login"):
+        if type(payload.get(key, False)) is not bool:
+            raise ConfigError(f"字段 {key} 必须为布尔值。")
+    if force_api_login and auth_mode == "none":
+        raise ConfigError("强制 API Key 登录需要钥匙串或环境变量认证；无认证模式不支持。")
     if len(provider_id) + 1 + max(len(profile_slug(m)) for m in models) > 80:
         raise ConfigError("模型 ID 过长，无法生成合规的 profile 名称；请缩短模型 ID 或供应商 ID。")
     return {
@@ -176,6 +191,8 @@ def normalize(payload):
         "reasoning_effort": effort,
         "set_default": payload.get("set_default", True),
         "has_key": payload.get("has_key", False),
+        "write_catalog": write_catalog,
+        "force_api_login": force_api_login,
     }
 
 
@@ -242,14 +259,41 @@ class ConfigStore:
                     continue
         return {"path": None, "version": None, "cli_version": None}
 
+    def catalog_path(self, data):
+        """Resolve `model_catalog_json` to an absolute path, or None when unset.
+
+        Relative paths are interpreted under the Codex home, the same way the
+        desktop app resolves them. Every caller must go through this helper:
+        a path resolved against the process working directory instead would
+        point at a different file than the one the state panel described.
+        """
+        raw = data.get("model_catalog_json")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        p = Path(raw).expanduser()
+        return p if p.is_absolute() else self.home / p
+
+    def catalog_source(self, data):
+        """Return the catalog file a merge would read from, or None when there is none.
+
+        The UI uses this to decide whether "write model catalog" can be offered at
+        all. Merging from nothing would produce a catalog holding only custom models,
+        which makes the built-in models disappear from the desktop picker.
+        """
+        p = self.catalog_path(data)
+        if p is None:
+            # Imported here: model_catalog reads the effort list from this module.
+            from model_catalog import target_path as catalog_target_path
+            p = catalog_target_path(self.home)
+        return str(p) if p.is_file() and not p.is_symlink() else None
+
     def catalog_info(self, data):
         raw = data.get("model_catalog_json")
-        result = {"path": raw if isinstance(raw, str) else None, "count": 0, "preserved": True}
+        result = {"path": raw if isinstance(raw, str) else None, "count": 0, "preserved": True,
+                  "source": self.catalog_source(data)}
         slugs = []
-        if isinstance(raw, str):
-            p = Path(raw).expanduser()
-            if not p.is_absolute():
-                p = self.home / p
+        p = self.catalog_path(data)
+        if p is not None:
             try:
                 if p.stat().st_size <= 16 * 1024 * 1024:
                     catalog = json.loads(p.read_bytes())
@@ -300,12 +344,16 @@ class ConfigStore:
                 "current": {"model": data.get("model"), "model_provider": data.get("model_provider", "openai"),
                             "reasoning_effort": data.get("model_reasoning_effort")},
                 "catalog": catalog, "app": self.app_info(), "providers": providers,
+                "protocol": WIRE_API,
                 "backups": backups, "keychain_available": self.keychain.available,
                 "warnings": warnings, "demo": self.demo,
             }
 
     def preview(self, payload):
         f = normalize(payload)
+        # Imported here: model_catalog reads the effort list from this module.
+        from model_catalog import plan as catalog_plan
+        from model_catalog import preview_text as catalog_preview_text
         with self.lock:
             raw, revision, data, doc = self.snapshot()
             provider_id = f["provider_id"]
@@ -342,10 +390,31 @@ class ConfigStore:
                 warnings.append("无密钥模式只适用于本机无需认证的服务。")
             catalog, slugs = self.catalog_info(data)
             missing = [m for m in f["models"] if m not in slugs]
-            if missing:
+            catalog_write = None
+            catalog_changes = []
+            if f["write_catalog"]:
+                # Same resolution as catalog_source(), so the checkbox can never
+                # promise a merge the preview then refuses.
+                source = self.catalog_source(data)
+                if source is None:
+                    raise ConfigError("未找到现有模型目录：model_catalog_json 未设置或无法读取。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。", "catalog_unavailable")
+                catalog_write = catalog_plan(self.home, source, f["models"], f["name"], f["reasoning_effort"])
+                if not catalog_write["source_count"]:
+                    # Merging from an empty source would hide every built-in model.
+                    raise ConfigError("现有模型目录为空或无法解析，为保证官方模型仍可选，未生成新目录。", "catalog_unavailable")
+                catalog_changes = [
+                    f"写入模型目录：{catalog_write['path']}",
+                    f"合并现有目录 {catalog_write['source_count']} 条记录，新增 {len(catalog_write['added'])} 个模型条目",
+                    "设置 model_catalog_json 指向新目录文件；原目录文件已备份。",
+                ]
+                warnings.append("目录写入后，桌面端选择器改用这个文件；Codex 之后的远程目录更新不会再生效。把 model_catalog_json 改回原路径即可恢复。")
+                warnings.append("目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。")
+                if catalog_write["skipped"]:
+                    warnings.append(f"这些模型 ID 已在目录中，保留原有条目：{'、'.join(catalog_write['skipped'])}")
+            elif missing:
                 warnings.append(
                     f"这些模型不在现有本地目录中：{'、'.join(missing)}"
-                    f"。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。")
+                    f"。桌面端选择器只渲染目录条目，未列入时选择器会退回默认推荐模型集；勾选写入模型目录可让它们出现在列表中。")
             targets = profile_names(f["provider_id"], f["models"])
             existing_profiles = data.get("profiles") or {}
             if not isinstance(existing_profiles, dict):
@@ -362,7 +431,7 @@ class ConfigStore:
             provider = tomlkit.table()
             provider.add("name", f["name"])
             provider.add("base_url", f["base_url"])
-            provider.add("wire_api", "responses")
+            provider.add("wire_api", WIRE_API)
             provider.add("requires_openai_auth", False)
             for key in ("request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"):
                 if key in existing:
@@ -377,7 +446,10 @@ class ConfigStore:
             elif f["auth_mode"] == "env":
                 provider.add("env_key", f["env_key"])
             snippet = tomlkit.document()
-            changes = [f"{'更新' if existing else '添加'}供应商：{provider_id}", "保留现有模型目录和其他供应商"]
+            changes = [f"{'更新' if existing else '添加'}供应商：{provider_id}",
+                       "合并写入新的模型目录；原始目录文件保留在备份中" if f["write_catalog"]
+                       else "保留现有模型目录和其他供应商"]
+            changes.extend(catalog_changes)
             if len(f["models"]) > 1:
                 changes.append(f"一次添加 {len(f['models'])} 个模型：{'、'.join(f['models'])}")
             if f["save_profiles"]:
@@ -402,6 +474,23 @@ class ConfigStore:
                     changes.append("清除旧的推理强度，避免向新模型发送不支持的选项")
             else:
                 changes.append("只保存供应商；不切换当前模型（模型 ID 与推理强度不会写入默认设置）")
+            if f["write_catalog"]:
+                for target in (doc, snippet):
+                    target["model_catalog_json"] = catalog_write["path"]
+                if isinstance(data.get("desktop"), dict):
+                    doc["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
+                    if "desktop" not in snippet:
+                        snippet["desktop"] = tomlkit.table()
+                    snippet["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
+                    changes.append("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。")
+                else:
+                    warnings.append("配置中没有 [desktop] 表，未写入推理强度列表；若桌面端隐藏了所选强度，请手动添加。")
+            if f["force_api_login"]:
+                for target in (doc, snippet):
+                    target["preferred_auth_method"] = "apikey"
+                    target["forced_login_method"] = "api"
+                changes.append("写入 preferred_auth_method 与 forced_login_method，启动后直接使用 API Key 登录。")
+                warnings.append("改为 API Key 登录后，此前用 ChatGPT 账号登录的会话历史会归到另一种登录方式下而暂时看不到；改回即可恢复，不会被删除。")
             if f["reasoning_effort"]:
                 warnings.append("推理强度由你指定；请确认上游模型支持该值。")
             if "model_providers" not in doc:
@@ -458,6 +547,14 @@ class ConfigStore:
                 if f["set_default"]:
                     for key in ("model", "model_provider", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity", "model_context_window", "model_auto_compact_token_limit"):
                         d.pop(key, None)
+                if f["write_catalog"]:
+                    d.pop("model_catalog_json", None)
+                    desktop = d.get("desktop")
+                    if isinstance(desktop, dict):
+                        desktop.pop("enabled-reasoning-efforts", None)
+                if f["force_api_login"]:
+                    for key in ("preferred_auth_method", "forced_login_method"):
+                        d.pop(key, None)
             if untouched_before != untouched_after:
                 raise ConfigError("检测到无关设置发生变化，已阻止写入。", "internal", 500)
             plan_id = secrets.token_urlsafe(24)
@@ -471,12 +568,81 @@ class ConfigStore:
                 "profiles": [{"model": m, "profile": n, "default": m == f["default_model"]}
                              for m, n in targets] if f["save_profiles"] else [],
             }
+            if catalog_write:
+                public["catalog"] = {
+                    "path": catalog_write["path"], "source_path": catalog_write["source_path"],
+                    "added": catalog_write["added"], "skipped": catalog_write["skipped"],
+                    "count": catalog_write["count"], "source_count": catalog_write["source_count"],
+                    "preview": catalog_preview_text(catalog_write["entries"]),
+                }
             self.plans = {k: v for k, v in self.plans.items() if time.monotonic() - v["created"] < 900}
             if len(self.plans) >= 100:
                 self.plans.pop(next(iter(self.plans)))
             self.plans[plan_id] = {"form": f, "raw": raw, "revision": revision, "rendered": rendered,
-                                   "account": account, "backup_id": backup_id, "created": time.monotonic()}
+                                   "account": account, "backup_id": backup_id, "created": time.monotonic(),
+                                   "catalog": catalog_write}
             return public
+
+    def restore(self, payload):
+        """Restore one backup produced by apply(), after an explicit confirmation.
+
+        The current configuration is copied into a fresh backup first, so a
+        restore is itself reversible. Only files this tool wrote are touched.
+        """
+        if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+            raise ConfigError("请先确认，才会还原备份。", "confirmation_required")
+        backup_id = text(payload, "backup_id", 64)
+        if not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8}", backup_id):
+            raise ConfigError("备份标识无效。", "invalid_backup")
+        with self.lock:
+            if self.backup_root.is_symlink() or not self.backup_root.is_dir():
+                raise ConfigError("备份目录不存在或是符号链接，已停止还原。", "invalid_backup")
+            backup = self.backup_root / backup_id
+            if not backup.is_dir() or backup.is_symlink():
+                raise ConfigError("备份不存在。", "invalid_backup")
+            try:
+                manifest = json.loads((backup / "manifest.json").read_text())
+                stored = (backup / "config.toml").read_bytes()
+            except (OSError, ValueError):
+                raise ConfigError("备份清单或配置文件无法读取，已停止还原。", "invalid_backup") from None
+            if not manifest.get("applied") or not isinstance(manifest.get("before_sha256"), str):
+                raise ConfigError("这个备份不完整或不是已应用的备份，已停止还原。", "invalid_backup")
+            if digest(stored) != manifest["before_sha256"]:
+                raise ConfigError("备份内容与清单记录不一致，已停止还原。", "invalid_backup")
+            if manifest.get("existed") is False:
+                raise ConfigError("这个备份记录的是“原本没有配置文件”。为避免删除文件，本工具不自动删除；请手动处理。", "invalid_backup")
+            raw, revision, _, _ = self.snapshot()
+            safety_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(4)
+            safety = self.backup_root / safety_id
+            safety.mkdir(mode=0o700)
+            if revision != "missing":
+                shutil.copy2(self.path, safety / "config.toml", follow_symlinks=False)
+                os.chmod(safety / "config.toml", 0o600)
+                if digest((safety / "config.toml").read_bytes()) != revision:
+                    raise ConfigError("还原前的安全副本校验失败，未修改任何文件。", "backup_failed", 500)
+            atomic_write(safety / "manifest.json", json.dumps({
+                "created": datetime.now(timezone.utc).isoformat(), "config_path": str(self.path),
+                "existed": revision != "missing", "before_sha256": revision,
+                "after_sha256": manifest["before_sha256"], "applied": False,
+                "note": "Copy taken immediately before a restore; restores the state that was rolled back.",
+            }, ensure_ascii=False, indent=2).encode())
+            catalog_manifest = manifest.get("catalog")
+            catalog_restored = False
+            if isinstance(catalog_manifest, dict) and catalog_manifest.get("backups"):
+                source = catalog_manifest["backups"][0]
+                saved = backup / source
+                target = Path(catalog_manifest.get("path", ""))
+                if saved.is_file() and not saved.is_symlink() and target.parent.is_dir():
+                    atomic_write(target, saved.read_bytes())
+                    catalog_restored = True
+            atomic_write(self.path, stored)
+            if self.path.read_bytes() != stored:
+                raise ConfigError("还原后文件再次发生变化，请检查备份目录，不要重复还原。", "conflict", 409)
+            return {
+                "ok": True, "backup_id": backup_id, "safety_backup": safety_id,
+                "config_path": str(self.path), "catalog_restored": catalog_restored,
+                "message": "已还原该备份。还原前的配置已另存为新备份，可再次还原；请完全退出应用（⌘Q）后重新打开。",
+            }
 
     def apply(self, payload):
         if not isinstance(payload, dict) or payload.get("confirmed") is not True:
@@ -522,12 +688,37 @@ class ConfigStore:
                     os.chmod(backup / "config.toml", 0o600)
                     if digest((backup / "config.toml").read_bytes()) != plan["revision"]:
                         raise ConfigError("备份校验失败，未修改配置。", "backup_failed", 500)
+                catalog = plan.get("catalog")
+                catalog_backups = []
+                catalog_manifest = None
+                if catalog:
+                    seen = set()
+                    for name, source in (("catalog-source.json", catalog["source_path"]),
+                                         ("catalog-target.json", catalog["path"])):
+                        p = Path(source).expanduser() if source else None
+                        if not p or not p.is_file() or p.is_symlink():
+                            continue
+                        resolved = str(p.resolve())
+                        if resolved in seen:
+                            continue
+                        seen.add(resolved)
+                        shutil.copy2(p, backup / name, follow_symlinks=False)
+                        os.chmod(backup / name, 0o600)
+                        catalog_backups.append(name)
+                    catalog_manifest = {
+                        "path": catalog["path"], "source_path": catalog["source_path"],
+                        "added": catalog["added"], "skipped": catalog["skipped"],
+                        "backups": catalog_backups,
+                        "before_sha256": digest(Path(catalog["path"]).read_bytes()) if Path(catalog["path"]).is_file() else None,
+                        "after_sha256": digest(catalog["rendered"]),
+                    }
                 manifest = {
                     "created": datetime.now(timezone.utc).isoformat(), "config_path": str(self.path),
                     "existed": plan["revision"] != "missing", "before_sha256": plan["revision"],
                     "after_sha256": digest(plan["rendered"]), "provider_id": f["provider_id"],
                     "models": f["models"], "default_model": f["default_model"],
                     "profiles": [{"model": m, "profile": n} for m, n in profile_names(f["provider_id"], f["models"])] if f["save_profiles"] else [],
+                    "catalog": catalog_manifest,
                     "credential_recovery": "Existing Keychain items were not overwritten or deleted.",
                     "applied": False,
                 }
@@ -537,6 +728,10 @@ class ConfigStore:
                         self.keychain.add(plan["account"], secret)
                     if self.snapshot()[1] != plan["revision"]:
                         raise ConfigError("保存期间配置发生变化，已停止写入；新钥匙串条目可能已建立但未启用。", "conflict", 409)
+                    if catalog:
+                        # Written first: if the config write then fails, config.toml
+                        # still points at the previous catalog, so nothing changes.
+                        atomic_write(Path(catalog["path"]), catalog["rendered"])
                     atomic_write(self.path, plan["rendered"])
                 except KeychainError as e:
                     raise ConfigError(str(e), "keychain_failed") from None
@@ -559,5 +754,7 @@ class ConfigStore:
                     "profiles": [{"model": m, "profile": n, "default": m == f["default_model"]}
                                  for m, n in profile_names(f["provider_id"], f["models"])] if f["save_profiles"] else [],
                     "keychain_saved": bool(secret), "connection_tested": False, "restart_required": True,
+                    "catalog": {"path": catalog["path"], "added": catalog["added"],
+                                "skipped": catalog["skipped"], "count": catalog["count"]} if catalog else None,
                     "message": "配置已备份并写入。请保存工作，完全退出应用（⌘Q）后重新打开，再用新会话验证模型。",
                 }

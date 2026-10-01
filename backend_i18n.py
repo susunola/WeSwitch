@@ -96,6 +96,50 @@ _EXACT_TRANSLATIONS = {
         "Save only the provider; do not switch the current model (the model ID and reasoning effort will not be written to the defaults)",
     "推理强度由你指定；请确认上游模型支持该值。":
         "You specified the reasoning effort; confirm that the upstream model supports this value.",
+    "合并写入新的模型目录；原始目录文件保留在备份中":
+        "Merge into a new model catalog; the original catalog file is preserved in the backup",
+    "设置 model_catalog_json 指向新目录文件；原目录文件已备份。":
+        "Point model_catalog_json at the new catalog file; the original catalog file has been backed up.",
+    "目录写入后，桌面端选择器改用这个文件；Codex 之后的远程目录更新不会再生效。把 model_catalog_json 改回原路径即可恢复。":
+        "After the catalog is written, the desktop picker uses this file; later remote catalog updates from Codex will no longer take effect. Point model_catalog_json back at the original path to restore that.",
+    "目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。":
+        "Catalog entries only determine the desktop display name and reasoning options; requests still use the model ID and API URL you entered.",
+    "在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。":
+        "Enable all reasoning effort options under [desktop] so the selected effort is not hidden by the UI.",
+    "配置中没有 [desktop] 表，未写入推理强度列表；若桌面端隐藏了所选强度，请手动添加。":
+        "The configuration has no [desktop] table, so the reasoning effort list was not written; if the desktop hides the selected effort, add it manually.",
+    "写入 preferred_auth_method 与 forced_login_method，启动后直接使用 API Key 登录。":
+        "Write preferred_auth_method and forced_login_method so the app signs in with the API Key directly on launch.",
+    "改为 API Key 登录后，此前用 ChatGPT 账号登录的会话历史会归到另一种登录方式下而暂时看不到；改回即可恢复，不会被删除。":
+        "After switching to API Key sign-in, sessions created with a ChatGPT account are grouped under another sign-in method and are temporarily hidden; switching back restores them, and nothing is deleted.",
+    "请先确认，才会还原备份。":
+        "Confirm first; only then will the backup be restored.",
+    "备份标识无效。":
+        "The backup identifier is invalid.",
+    "备份不存在。":
+        "The backup does not exist.",
+    "备份目录不存在或是符号链接，已停止还原。":
+        "The backup directory does not exist or is a symbolic link. The restore has been stopped.",
+    "备份清单或配置文件无法读取，已停止还原。":
+        "The backup manifest or configuration file cannot be read. The restore has been stopped.",
+    "这个备份不完整或不是已应用的备份，已停止还原。":
+        "This backup is incomplete or was never applied. The restore has been stopped.",
+    "备份内容与清单记录不一致，已停止还原。":
+        "The backup contents do not match the manifest record. The restore has been stopped.",
+    "这个备份记录的是“原本没有配置文件”。为避免删除文件，本工具不自动删除；请手动处理。":
+        "This backup records that no configuration file existed before. To avoid deleting files, this tool does not delete automatically; handle it manually.",
+    "还原前的安全副本校验失败，未修改任何文件。":
+        "Verification of the safety copy failed before restoring. No file has been modified.",
+    "还原后文件再次发生变化，请检查备份目录，不要重复还原。":
+        "The file changed again after restoring. Check the backup directory and do not restore repeatedly.",
+    "已还原该备份。还原前的配置已另存为新备份，可再次还原；请完全退出应用（⌘Q）后重新打开。":
+        "The backup has been restored. The configuration as it was before restoring has been saved as a new backup, so the restore itself can be reversed; fully quit the application (⌘Q) and reopen it.",
+    "强制 API Key 登录需要钥匙串或环境变量认证；无认证模式不支持。":
+        "Forcing API Key sign-in requires Keychain or environment-variable authentication; keyless mode is not supported.",
+    "未找到现有模型目录：model_catalog_json 未设置或无法读取。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。":
+        "No existing model catalog was found: model_catalog_json is unset or unreadable. To avoid making the built-in models disappear from the picker, this tool does not create a catalog containing only custom models.",
+    "现有模型目录为空或无法解析，为保证官方模型仍可选，未生成新目录。":
+        "The existing model catalog is empty or cannot be parsed, so no new catalog was generated; this keeps the built-in models selectable.",
     "生成的配置校验失败，停止写入。":
         "The generated configuration failed validation. Writing has been stopped.",
     "检测到无关设置发生变化，已阻止写入。":
@@ -205,6 +249,42 @@ _EXACT_TRANSLATIONS = {
     "无法连接模型列表接口。请检查地址、网络或 TLS 证书；本工具不会跳过证书校验。":
         "Unable to connect to the model list endpoint. Check the URL, network, or TLS certificate; this tool does not skip certificate verification.",
 
+    # connection_test.py: consent, cost disclosure, and protocol verdicts.
+    "请确认目标地址并点击测试连接，才会发送请求。":
+        "Confirm the destination URL and click Test connection before a request is sent.",
+    "这次测试向服务商真实发送了一次最短请求（最多输出 16 个 token），可能产生少量费用。":
+        "This test sends one real minimal request to the provider (at most 16 output tokens), which may cost a small amount of quota.",
+    "服务端接受了 Responses 请求并返回响应对象；协议兼容，凭据可用。":
+        "The service accepted the Responses request and returned a response object; the protocol is compatible and the credential works.",
+    "测试成功只说明这个地址接受了一次最短的 Responses 请求；工具调用、长上下文和流式输出仍需在 Codex 新会话中验证。":
+        "A successful test only shows that this URL accepted one minimal Responses request; tool calls, long context, and streaming still need to be verified in a new Codex session.",
+    "地址返回了成功状态，但响应结构不是 Responses（缺少 response 或 output）。Codex 按 Responses 解析，可能无法使用。":
+        "The URL returned a success status, but the response is not a Responses structure (no response or output). Codex parses Responses and may not be able to use it.",
+    "地址返回的是 Chat Completions 结构。Codex 只支持 Responses 协议，不能切换协议。":
+        "The URL returned a Chat Completions structure. Codex supports only the Responses protocol and cannot switch protocols.",
+    "地址返回成功状态，但响应不是有效 JSON；可能是网页或网关。Codex 无法使用它。":
+        "The URL returned a success status, but the response is not valid JSON; it may be a web page or gateway. Codex cannot use it.",
+    "这个地址没有可用的 /responses 接口。Codex 只支持 Responses 协议，不能改为其他协议。":
+        "This URL has no usable /responses endpoint. Codex supports only the Responses protocol and cannot be switched to another one.",
+    "认证被拒绝。请核对 API Key 或环境变量；未读取上游错误正文。":
+        "Authentication was rejected. Check the API Key or environment variable; the upstream error body was not read.",
+    "请求被拒绝（HTTP 400）。常见原因是模型 ID 不受支持；未读取上游错误正文。":
+        "The request was rejected (HTTP 400). A common cause is an unsupported model ID; the upstream error body was not read.",
+    "服务商限流，请稍后重试。":
+        "The provider is rate-limiting requests. Retry later.",
+    "接口要求跳转。为避免密钥泄露，未跟随跳转；请填写最终 API 地址。":
+        "The endpoint requested a redirect. It was not followed to avoid leaking the key; enter the final API URL directly.",
+    "接口发生了跳转。为避免密钥泄露，未跟随跳转；请填写最终 API 地址。":
+        "The endpoint redirected. It was not followed to avoid leaking the key; enter the final API URL directly.",
+    "连接测试响应过大，已停止读取，无法判断协议兼容性。":
+        "The connection test response is too large. Reading has been stopped, so protocol compatibility cannot be determined.",
+    "连接测试响应使用了不支持的压缩方式，无法判断协议兼容性。":
+        "The connection test response uses an unsupported compression method, so protocol compatibility cannot be determined.",
+    "连接测试超时。请检查网络或服务商状态；未保存任何凭据或配置。":
+        "The connection test timed out. Check the network or provider status; no credential or configuration was saved.",
+    "无法连接该地址。请检查地址、网络或 TLS 证书；本工具不会跳过证书校验。":
+        "Unable to connect to this URL. Check the URL, network, or TLS certificate; this tool does not skip certificate verification.",
+
     # keychain.py: read, authorization, and availability errors.
     "无法读取这个钥匙串条目，请在表单中重新填写 API Key。":
         "Unable to read this Keychain item; enter the API Key again in the form.",
@@ -242,6 +322,8 @@ _EXACT_TRANSLATIONS = {
         "Preview requests must not contain an API Key.",
     "已有模型列表请求正在处理，请等待完成后重试。":
         "A model list request is already being processed; wait for it to finish before trying again.",
+    "已有连接测试正在进行，请等待完成后重试。":
+        "A connection test is already running; wait for it to finish before trying again.",
     "操作未能完成。请检查本机权限和备份目录；不要重复提交。详细异常已隐藏以保护凭据。":
         "The operation could not be completed. Check local permissions and the backup directory; do not submit repeatedly. Exception details have been hidden to protect credentials.",
     "此工具不允许跨域访问。":
@@ -288,8 +370,13 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
      "At most {limit} models can be added at once; add them in batches."),
     (r"\A移除不再选择的托管 profile：(?P<name>[^\r\n]+)（原值完整保留在备份中）\Z",
      "Remove the managed profile that is no longer selected: {name} (the original value is fully preserved in the backup)"),
-    (r"\A这些模型不在现有本地目录中：(?P<models>[^\r\n]+)。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。\Z",
-     "These models are not in the existing local catalog: {models}. The catalog will remain unchanged; the desktop selector may display Custom, hide them, or refuse selection. Verify after restarting."),
+    (r"\A这些模型不在现有本地目录中：(?P<models>[^\r\n]+)。桌面端选择器只渲染目录条目，未列入时选择器会退回默认推荐模型集；勾选写入模型目录可让它们出现在列表中。\Z",
+     "These models are not in the existing local catalog: {models}. The desktop picker renders catalog entries only, so an unlisted model makes the picker fall back to the default recommended set. Enable 'write model catalog' to make them appear in the list."),
+    (r"\A写入模型目录：(?P<path>[^\r\n]+)\Z", "Write the model catalog: {path}"),
+    (r"\A合并现有目录 (?P<total>[0-9]+) 条记录，新增 (?P<count>[0-9]+) 个模型条目\Z",
+     "Merge {total} entries from the existing catalog and add {count} model entries"),
+    (r"\A这些模型 ID 已在目录中，保留原有条目：(?P<models>[^\r\n]+)\Z",
+     "These model IDs are already in the catalog; the existing entries are kept: {models}"),
     (r"\Aprofile 名称 (?P<name>[^\r\n]+) 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。\Z",
      "The profile name {name} is already used and contains settings this tool does not write. Choose a different provider ID, or rename or remove that profile manually before retrying."),
     # '未设置' may be the fallback OR an actual model ID. The rendered message
@@ -302,6 +389,8 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
      "Ignored {count} records with an invalid format or sensitive content."),
     (r"\A服务商模型列表接口返回 HTTP (?P<code>[0-9]{3})；未读取错误正文，请稍后重试或手动填写。\Z",
      "The provider's model list endpoint returned HTTP {code}; the error body was not read. Retry later or enter the model manually."),
+    (r"\A服务端返回 HTTP (?P<status>[0-9]{3})；未读取错误正文，请稍后重试。\Z",
+     "The service returned HTTP {status}; the error body was not read. Retry later."),
     (r"\A无法检查钥匙串（系统状态 (?P<status>-?[0-9]+)）。请先解锁登录钥匙串。\Z",
      "Unable to check Keychain (system status {status}). Unlock the login Keychain first."),
     (r"\A钥匙串保存未成功（系统状态 (?P<status>-?[0-9]+)）。未写入 Codex 配置。\Z",

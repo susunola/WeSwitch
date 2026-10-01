@@ -12,7 +12,7 @@ import backend_i18n as i18n
 
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ("config_core.py", "model_discovery.py", "keychain.py", "server.py")
+SOURCE_FILES = ("config_core.py", "model_discovery.py", "connection_test.py", "keychain.py", "server.py")
 CJK = re.compile(r"[\u3400-\u9fff]")
 KNOWN = "不支持的认证方式。"
 ENGLISH = "Unsupported authentication method."
@@ -98,6 +98,12 @@ DYNAMIC_CASES = {
         ("服务商模型列表接口返回 HTTP 503；未读取错误正文，请稍后重试或手动填写。",
          "The provider's model list endpoint returned HTTP 503; the error body was not read. Retry later or enter the model manually."),
     ),
+    "服务端返回 HTTP {}；未读取错误正文，请稍后重试。": (
+        ("服务端返回 HTTP 500；未读取错误正文，请稍后重试。",
+         "The service returned HTTP 500; the error body was not read. Retry later."),
+        ("服务端返回 HTTP 418；未读取错误正文，请稍后重试。",
+         "The service returned HTTP 418; the error body was not read. Retry later."),
+    ),
     "无法检查钥匙串（系统状态 {}）。请先解锁登录钥匙串。": (
         ("无法检查钥匙串（系统状态 -25293）。请先解锁登录钥匙串。",
          "Unable to check Keychain (system status -25293). Unlock the login Keychain first."),
@@ -124,9 +130,23 @@ DYNAMIC_CASES = {
         ("移除不再选择的托管 profile：my-gateway-gpt-4（原值完整保留在备份中）",
          "Remove the managed profile that is no longer selected: my-gateway-gpt-4 (the original value is fully preserved in the backup)"),
     ),
-    "这些模型不在现有本地目录中：{}。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。": (
-        ("这些模型不在现有本地目录中：a、b。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。",
-         "These models are not in the existing local catalog: a、b. The catalog will remain unchanged; the desktop selector may display Custom, hide them, or refuse selection. Verify after restarting."),
+    "这些模型不在现有本地目录中：{}。桌面端选择器只渲染目录条目，未列入时选择器会退回默认推荐模型集；勾选写入模型目录可让它们出现在列表中。": (
+        ("这些模型不在现有本地目录中：a、b。桌面端选择器只渲染目录条目，未列入时选择器会退回默认推荐模型集；勾选写入模型目录可让它们出现在列表中。",
+         "These models are not in the existing local catalog: a、b. The desktop picker renders catalog entries only, so an unlisted model makes the picker fall back to the default recommended set. Enable 'write model catalog' to make them appear in the list."),
+    ),
+    "写入模型目录：{}": (
+        ("写入模型目录：/Users/me/.codex/models.json",
+         "Write the model catalog: /Users/me/.codex/models.json"),
+    ),
+    "合并现有目录 {} 条记录，新增 {} 个模型条目": (
+        ("合并现有目录 8 条记录，新增 2 个模型条目",
+         "Merge 8 entries from the existing catalog and add 2 model entries"),
+        ("合并现有目录 0 条记录，新增 1 个模型条目",
+         "Merge 0 entries from the existing catalog and add 1 model entries"),
+    ),
+    "这些模型 ID 已在目录中，保留原有条目：{}": (
+        ("这些模型 ID 已在目录中，保留原有条目：gpt-5.6-terra、deepseek-v4-pro",
+         "These model IDs are already in the catalog; the existing entries are kept: gpt-5.6-terra、deepseek-v4-pro"),
     ),
     "profile 名称 {} 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。": (
         ("profile 名称 my-gateway-fast 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。",

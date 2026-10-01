@@ -73,7 +73,14 @@ class UpstreamHandler(BaseHTTPRequestHandler):
         pass
 
     def dispatch(self):
-        record = {"method": self.command, "path": self.path,
+        # Read the body before responding: a connection test POSTs a real payload and
+        # the assertion checks what this tool actually sent.
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        body = self.rfile.read(length) if 0 < length <= 65536 else b""
+        record = {"method": self.command, "path": self.path, "body": body,
                   "headers": {name.lower(): self.headers.get_all(name)
                               for name in self.headers.keys()}}
         with self.server.records_lock:

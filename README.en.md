@@ -15,6 +15,9 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 - Newly entered managed API keys live in macOS Keychain, not as secret values in configuration or process arguments.
 - Optional model discovery sends `GET <base>/models` only after separate, explicit consent. No generation calls are made, and listing models is not a compatibility test.
 - **Add several models at once:** one provider entry, one credential, many model IDs (for example Pro and Flash), each saved as a switchable profile.
+- **Optional model catalog write:** the desktop picker renders only the entries of `model_catalog_json`. When enabled, your models are merged into a new catalog file and the existing one is backed up first; when disabled, no catalog file is touched.
+- **Optional connection and protocol check:** after consent, **one minimal request** (at most 16 output tokens) is sent to confirm the endpoint accepts Codex's only wire protocol. It may cost a small amount of quota; it reports the result and saves no key or configuration.
+- **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible.
 
 ## Get started
 
@@ -22,10 +25,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.2.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.3.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.2.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.3.0-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -55,11 +58,23 @@ One gateway and one credential need only one provider entry: enter **one model I
 - Names are derived from the provider ID and model ID, for example `deepseek-deepseek-chat`. An existing profile of the same name that holds settings this tool does not write is rejected instead of overwritten.
 - Switching depends on the profile support of your Codex build (for example the `profile` setting or `--profile`). **This tool does not guarantee that these models appear in the desktop model picker.** Check your Codex version and enter a model ID manually if needed.
 
+## One wire protocol
+
+Codex has exactly one wire protocol: the **Responses API**. The legacy `wire_api = "chat"` value was removed from codex-cli (Chat Completions is no longer supported), and the configuration exposes no protocol switch. The UI therefore offers no protocol dropdown — the only open question is whether the endpoint accepts a minimal Responses request.
+
+The connection test sends that request and inspects the reply: a `response` object or an `output` array counts as compatible, while a `chat.completion` shape is reported as incompatible and **cannot be worked around by switching protocols**. A successful listing does not prove protocol compatibility, and a saved configuration does not prove the model works; tool calling, long context, and streaming still need to be verified in a fresh Codex conversation.
+
+## Model catalog and rollback
+
+**Catalog:** when "write model catalog" is enabled, WeSwitch **merges** the existing entries with your new models into `~/.codex/models.json` (the original is always backed up first) and points `model_catalog_json` at it. Without both of those, the picker falls back to its default recommended set. Catalog entries only decide the desktop display name and reasoning options; requests still use the model ID and base URL you entered. After the write, Codex's remote catalog updates no longer apply — point `model_catalog_json` back at the original path to restore that. The option is not offered when no existing catalog can be found: a catalog holding only custom models would hide the built-in models in the picker.
+
+**Rollback:** every applied backup under `~/.codex/model-ui-backups/` can be restored from the UI, and the current configuration is saved as another backup first. A restore only overwrites files this tool wrote (the configuration, and the catalog file written by that apply); it never deletes Keychain items.
+
 ## Scope and limitations
 
 1. Enter the provider base URL and model ID. `https://api.example.com/v1` and `model-id` are **illustrative only**, not service recommendations or claims of availability.
 2. To discover models, review the destination and credentials, then approve that request separately. Authentication information may be sent to the selected provider; cancellation makes no request. The result is metadata: it **does not establish Responses API compatibility, model availability, account access, or visibility in Codex's model picker**.
-3. Preview and explicitly apply the configuration changes. WeSwitch does not write a custom model catalog or guarantee that a model appears in Codex's picker.
+3. Preview and explicitly apply the configuration changes. Writing the model catalog is your choice; when it is disabled the catalog file and `model_catalog_json` are left untouched and the model will not appear in the desktop picker.
 4. Save your work, fully quit and reopen Codex, and check a new conversation. Project settings, profiles, launch arguments, and current-thread selections may override global defaults; WeSwitch does not force those overrides to change.
 
 **Environment-variable authentication:** configuration stores the variable name only. WeSwitch does not set system environment variables, and Finder-launched apps may not inherit your shell environment. Model discovery can read only a process variable matching the **same pre-saved provider, base URL, and variable name**; it cannot read arbitrary environment variables. For a new provider, enter a model ID manually or use a temporary key in the form for an explicitly approved list request. Discovery itself does not save that key. A reused server retains its original environment; stop it before relaunching with changed variables.
@@ -95,9 +110,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.2.0
+.venv/bin/python scripts/build_macos.py --version v0.3.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.2.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.3.0 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -105,7 +120,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.2.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.3.0
 ```
 
 ## License

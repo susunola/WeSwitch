@@ -12,7 +12,7 @@ import tomllib
 from unittest import mock
 
 from backend_i18n import translate_text
-from config_core import ConfigStore
+from config_core import REASONING_EFFORTS, ConfigStore
 from server import LocalServer
 from test_config import FakeKeychain
 from test_discovery import UpstreamServer, reply
@@ -45,8 +45,13 @@ def value(expression):
 
 
 def wait_for(expression):
+    # On timeout the UI state is reported, not just the expression: a hidden panel usually
+    # means the backend rejected the request, and the DOM already carries that reason.
     js("(async()=>{const end=Date.now()+8000;while(!(" + expression + ")){"
-       "if(Date.now()>end)throw new Error('UI wait failed: '+" + json.dumps(expression) + ");"
+       "if(Date.now()>end)throw new Error('UI wait failed: '+JSON.stringify({expr:" + json.dumps(expression) +
+       ",status:document.getElementById('status-message')?.textContent,"
+       "error:document.getElementById('error-banner')?.hidden?'':document.getElementById('error-message')?.textContent,"
+       "last:window.__requests?.at(-1)?.data}));"
        "await new Promise(r=>requestAnimationFrame(r));}return true;})()")
 
 
@@ -165,10 +170,16 @@ def main():
     FAILURES.clear()
     finished = False
     with tempfile.TemporaryDirectory(prefix="codex-ui-browser-", dir="/tmp") as temp:
-        home = Path(temp)
-        initial = b'# Keep this comment\nmodel = "before"\n[mcp_servers.example]\ncommand = "example"\n'
+        # ConfigStore resolves the home directory; assert against the same path it uses.
+        home = Path(temp).resolve()
+        initial = (b'# Keep this comment\nmodel = "before"\nmodel_catalog_json = "model_catalog.json"\n'
+                   b'[mcp_servers.example]\ncommand = "example"\n'
+                   b'[desktop]\nenabled-reasoning-efforts = ["medium", "high"]\n')
         config = home / "config.toml"
         config.write_bytes(initial)
+        # A real catalog, so the merge path is exercised instead of skipped.
+        (home / "model_catalog.json").write_bytes(json.dumps(
+            {"models": [{"slug": "official-one", "display_name": "Official One"}]}).encode())
         store = ConfigStore(home, keychain=FakeKeychain(), demo=True)
         # Do not read metadata from a real installed application, even for screenshots.
         store.app_info = lambda: {"path": str(home / "TEST-ONLY-Codex.app"), "version": "TEST ONLY", "cli_version": "TEST ONLY"}
@@ -183,6 +194,18 @@ def main():
                                         {"id": "test-model"}, {"id": 123}], "has_more": True})
             elif handler.path == "/empty/models":
                 reply(handler, {"data": []})
+            elif handler.path == "/ping/responses":
+                # A real Responses object: this is what a compatible provider returns.
+                reply(handler, {"object": "response", "id": "resp_test", "model": "test-model",
+                                "output": [{"type": "message", "content": [{"type": "output_text", "text": "pong"}]}]})
+            elif handler.path == "/chat/responses":
+                # Chat Completions shape served at the Responses path: not usable by Codex.
+                reply(handler, {"object": "chat.completion", "model": "test-model",
+                                "choices": [{"message": {"content": "pong"}}]})
+            elif handler.path == "/leak/responses":
+                # An upstream echoing the credential must never surface it in the UI.
+                reply(handler, {"object": "response", "model": "sk-browser-test-only leaked",
+                                "output": []})
             else:
                 reply(handler, {"error": "private-upstream-message"}, status=404)
 
@@ -361,6 +384,61 @@ def main():
                 audit_english("English empty discovery")
                 expect(config.read_bytes() == initial and not store.keychain.items, "Fallbacks do not write config or credentials")
 
+                # Connection test: the only action that calls model generation, so it is
+                # gated by its own consent dialog and capped at 16 output tokens.
+                probe = {"model": "test-model", "input": "ping", "max_output_tokens": 16,
+                         "stream": False, "store": False}
+                js("window.__consent=false;true")
+                fill({"base_url": upstream.origin + "/ping"})
+                click("test-connection")
+                check("window.__confirmations.at(-1)===" + json.dumps(
+                    "Use your credentials to send one minimal Responses request to " + upstream.origin +
+                    "/ping/responses (model test-model, at most 16 output tokens) to check whether the URL "
+                    "supports the protocol and whether the credentials work? This may cost a small amount. Continue?"),
+                    "Exact English connection-test consent dialog")
+                check("document.getElementById('connection-status').textContent.startsWith('Cancelled.')", "English connection-test cancellation status")
+                toggle("zh-CN", upstream, store, "Chinese connection-test consent")
+                click("test-connection")
+                check("window.__confirmations.at(-1)===" + json.dumps(
+                    "将使用你的凭据向 " + upstream.origin + "/ping/responses 发送一次最短的 Responses 请求"
+                    "（模型 test-model，最多输出 16 个 token），用于判断该地址是否支持该协议、凭据是否可用。可能产生少量费用。是否继续？"),
+                    "Exact Chinese connection-test consent dialog")
+                expect(not [r for r in upstream.records if r["method"] == "POST"], "Cancelled connection tests send no POST", upstream.records)
+                toggle("en", upstream, store, "English connection test")
+                js("window.__consent=true;document.getElementById('test-connection').click();true")
+                wait_for("!document.getElementById('test-connection').disabled && document.getElementById('connection-status').dataset.tone==='green'")
+                compatible = latest_response("/api/connection-test", "en", 200, "English connection test")
+                expect(compatible.get("compatible") is True and compatible.get("connection_tested") is True
+                       and compatible.get("protocol") == "responses" and compatible.get("http_status") == 200,
+                       "Compatible Responses reply is reported as such", compatible)
+                posts = [r for r in upstream.records if r["method"] == "POST"]
+                expect(len(posts) == 1 and posts[0]["path"] == "/ping/responses"
+                       and posts[0]["headers"].get("authorization") == ["Bearer " + REPLACEMENT_KEY],
+                       "One authenticated POST reaches the owned upstream", [r["path"] for r in posts])
+                expect(json.loads(posts[0]["body"].decode()) == probe, "The probe is the documented minimal request", posts[0]["body"])
+                check("document.getElementById('connection-status').textContent.includes('Protocol compatible')", "Compatible verdict is rendered in English")
+                audit_english("English compatible connection test")
+
+                # Chat Completions served at the Responses path is not usable by Codex.
+                fill({"base_url": upstream.origin + "/chat"})
+                js("document.getElementById('test-connection').click();true")
+                wait_for("!document.getElementById('test-connection').disabled && document.getElementById('connection-status').dataset.tone==='warning'")
+                chat = latest_response("/api/connection-test", "en", 200, "English chat-shape connection test")
+                expect(chat.get("compatible") is False and chat.get("response_type") == "chat.completion",
+                       "Chat Completions shape is classified as incompatible", chat)
+                check("document.getElementById('connection-status').textContent.includes('Protocol incompatible')", "Incompatible verdict is rendered in English")
+                audit_english("English incompatible connection test")
+
+                # A provider echoing the credential must never surface it in the page.
+                fill({"base_url": upstream.origin + "/leak"})
+                js("document.getElementById('test-connection').click();true")
+                wait_for("!document.getElementById('test-connection').disabled")
+                leaked = latest_response("/api/connection-test", "en", 200, "English credential-echo connection test")
+                expect(leaked.get("reported_model") == "", "The server redacts a credential echoed upstream", leaked)
+                check("!document.body.textContent.includes(" + json.dumps(REPLACEMENT_KEY) + ")", "A secret echoed by the provider never reaches the page")
+                expect(len([r for r in upstream.records if r["method"] == "POST"]) == 3, "Exactly three confirmed probes reached the provider")
+                expect(config.read_bytes() == initial, "Connection tests never write configuration")
+
                 # Preserve the original no-auth preview/stale/confirm/apply/backup workflow.
                 click("new-provider")
                 fill({"name": "TEST ONLY Browser", "provider_id": "browser-test", "base_url": upstream.origin + "/unsupported",
@@ -390,8 +468,17 @@ def main():
                        and profiles.get("browser-test-test-model-three") == {"model": "test-model-three", "model_provider": "browser-test"},
                        "Every batch model is saved as a switchable profile without repeating the provider")
                 expect(data["mcp_servers"]["example"]["command"] == "example" and config.read_bytes().startswith(b"# Keep this comment\n"), "Unrelated MCP config and comment survive apply")
+                # Writing the catalog is opt-in but on by default when a catalog exists.
+                expect(data.get("model_catalog_json") == str(home / "models.json"), "The merged catalog path is written", data.get("model_catalog_json"))
+                merged = json.loads((home / "models.json").read_bytes())
+                expect([m["slug"] for m in merged["models"]] == ["official-one", "test-model-two", "test-model-three"],
+                       "Custom models are merged after the existing catalog entries", merged["models"])
+                expect(data.get("desktop", {}).get("enabled-reasoning-efforts") == list(REASONING_EFFORTS),
+                       "Every reasoning effort is enabled so the chosen level is not hidden", data.get("desktop"))
                 backups = list((home / "model-ui-backups").glob("*/config.toml"))
                 expect(len(backups) == 1 and backups[0].read_bytes() == initial, "Exactly one backup preserves the original config")
+                expect((home / "model-ui-backups" / backups[0].parent.name / "catalog-source.json").read_bytes()
+                       == (home / "model_catalog.json").read_bytes(), "The original catalog is backed up byte-exactly")
                 expect(not store.keychain.items and not store.keychain.add_calls, "No real or fake Keychain writes in no-auth apply")
                 check("document.getElementById('api_key').value==='' && document.getElementById('api_key').type==='password'", "Secrets are cleared after apply")
                 storage_check("After apply", server.token)
@@ -399,6 +486,35 @@ def main():
                 toggle("zh-CN", upstream, store, "Switch completed result to Chinese")
                 toggle("en", upstream, store, "Return completed result to English")
                 audit_english("English restored completed result")
+
+                # Restore: gated by its own consent dialog, and itself reversible.
+                click("edit-again")
+                applied_backup = backups[0].parent.name
+                js("window.__consent=false;true")
+                js("(()=>{const s=document.getElementById('backup-select');s.value=" + json.dumps(applied_backup) +
+                   ";s.dispatchEvent(new Event('change',{bubbles:true}));})();true")
+                check("!document.getElementById('rollback-button').disabled", "Choosing a backup enables restore")
+                click("rollback-button")
+                check("window.__confirmations.at(-1)===" + json.dumps(
+                    "Restore " + str(config) + " from backup " + applied_backup +
+                    "? The current configuration is saved as a new backup first, so this restore can itself be undone. Continue?"),
+                    "Exact English restore consent dialog")
+                check("document.getElementById('backup-status').textContent.startsWith('Cancelled.')", "English restore cancellation status")
+                expect(config.read_bytes() != initial, "Cancelled restore leaves the applied configuration in place")
+                js("window.__consent=true;document.getElementById('rollback-button').click();true")
+                wait_for("!document.getElementById('rollback-button').disabled && document.getElementById('backup-status').dataset.tone==='green'")
+                restored = latest_response("/api/rollback", "en", 200, "English restore")
+                expect(restored.get("ok") is True and restored.get("catalog_restored") is True,
+                       "Restore reports the catalog was rolled back too", restored)
+                expect(config.read_bytes() == initial, "Restore returns the original configuration byte-exactly")
+                expect(json.loads((home / "models.json").read_bytes())["models"] == [{"slug": "official-one", "display_name": "Official One"}],
+                       "Restore returns the original catalog")
+                safety = list((home / "model-ui-backups").glob("*/config.toml"))
+                expect(len(safety) == 2 and applied_backup in {p.parent.name for p in safety},
+                       "Restore keeps the applied backup and adds one for the state it replaced", [p.parent.name for p in safety])
+                audit_english("English restored backup")
+                storage_check("After restore", server.token)
+
                 requests_before = len(upstream.records)
                 browser("open", "about:blank")
                 browser("open", server.origin)
@@ -407,8 +523,14 @@ def main():
                 check("document.getElementById('preview-button').disabled && document.getElementById('apply-button').disabled && !location.hash", "Token-free reload never regains write access")
                 storage_check("Token-free reload", server.token)
                 audit_english("English token gate")
-                expect(len(upstream.records) == requests_before == 3 and all(r["method"] == "GET" and r["path"] in ("/v1/models", "/unsupported/models", "/empty/models") for r in upstream.records), "Exactly three consented loopback model GETs; no model generation")
-                expect(len(list((home / "model-ui-backups").glob("*/config.toml"))) == 1, "Language switches and token gate never reapply")
+                gets = [r for r in upstream.records if r["method"] == "GET"]
+                posts = [r for r in upstream.records if r["method"] == "POST"]
+                expect(requests_before == len(upstream.records), "Reloading never contacts the provider")
+                expect(len(gets) == 3 and all(r["path"] in ("/v1/models", "/unsupported/models", "/empty/models") for r in gets),
+                       "Exactly three consented loopback model GETs", [r["path"] for r in gets])
+                expect(len(posts) == 3 and all(r["path"].endswith("/responses") for r in posts),
+                       "Only the three confirmed probes called model generation", [r["path"] for r in posts])
+                expect(len(list((home / "model-ui-backups").glob("*/config.toml"))) == 2, "Language switches and token gate never reapply")
                 finished = True
         except Exception as error:
             expect(False, "Workflow aborted; subsequent assertions were not executed", str(error))

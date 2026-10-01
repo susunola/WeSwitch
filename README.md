@@ -15,6 +15,9 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 - 新输入的托管 API Key 保存到 macOS 钥匙串，不把密钥值写进配置或进程命令行。
 - 可选模型发现：只有明确同意后，才向所选基础地址发送 `GET <base>/models`。不发送生成请求，不把模型列表请求当成兼容性测试。
 - **一次添加多个模型**：同一个提供方的地址与密钥只填一次，多个模型 ID（如 Pro、Flash）一起保存，各自成为可切换的 profile，不需要为每种模型重复新建提供方。
+- **可选写入模型目录**：桌面端模型选择器只渲染 `model_catalog_json` 指向的目录条目。勾选后把你的模型合并进新目录文件，原目录先逐字节备份；不勾选则完全不碰目录文件。
+- **可选连接与协议检查**：确认后向该地址发送**一次最短请求**（最多 16 个输出 token），判断它是否接受 Codex 唯一的 Responses 协议；可能产生少量费用，只报告结果，不保存密钥或配置。
+- **每次应用都可回滚**：每次应用都会生成校验过的备份；界面里可选择任一已应用的备份还原，还原前会把当前配置再存一份新备份，因此还原本身也可撤销。
 
 ## 开始使用
 
@@ -22,10 +25,10 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 
 初始二进制发布目标为 **macOS Apple Silicon（arm64）**；CI 构建使用 macOS 14，本地构建已在 macOS 27 验证。其他系统版本尚需实际验证。独立应用内置 Python，不需要安装 Python、Homebrew 或 WorkBuddy。
 
-发布后，下载 `WeSwitch-v0.2.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
+发布后，下载 `WeSwitch-v0.3.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.2.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.3.0-macos-arm64.zip.sha256
 ```
 
 解压后打开 `WeSwitch.app`，默认浏览器会显示本地界面。校验和用于检查文件完整性，不等于发行者身份认证。
@@ -55,11 +58,23 @@ bash "Start WeSwitch.command"
 - 名称由「提供方 ID + 模型 ID」生成，例如 `deepseek-deepseek-chat`。已存在且含本工具不写入之设置的同名 profile 会被拒绝，避免覆盖你的配置。
 - 切换方式取决于 Codex 自身支持的 profile 能力（如配置 `profile`、命令行 `--profile`）。**本工具不保证桌面端模型下拉列表一定显示这些模型**；请以实际 Codex 版本为准，必要时手动输入模型 ID。
 
+## 接口协议：只有一个
+
+Codex 只有一种线协议：**Responses API**。旧版 `wire_api = "chat"` 已从 codex-cli 移除（Chat Completions 不再受支持），配置里也没有协议开关。所以界面不提供协议下拉选择 —— 真正待验证的只有一件事：这个地址是否接受一次最短的 Responses 请求。
+
+连接测试会真的发出这次请求并读取响应结构：返回 `response` 对象或 `output` 数组视为兼容；返回 `chat.completion` 结构则明确不兼容，且**不能改协议绕过**。列表成功不证明协议兼容，配置成功也不代表模型可用；工具调用、长上下文与流式输出仍需在 Codex 新会话里验证。
+
+## 模型目录与回滚
+
+**模型目录**：勾选「写入模型目录」后，WeSwitch 把现有目录条目与你新增的模型**合并**写入 `~/.codex/models.json`（原目录始终先备份），并把 `model_catalog_json` 指向它。这两件事都不做，选择器就会退回「默认 推荐模型集」。目录条目只决定桌面端的显示名称与推理选项，实际请求仍用你填的模型 ID 和地址。目录写入后 Codex 的远程目录更新不再生效；把 `model_catalog_json` 改回原路径即可恢复。本机找不到现有目录时不提供勾选 —— 只含自定义模型的目录会让官方模型从选择器里消失。
+
+**回滚**：`~/.codex/model-ui-backups/` 下每个已应用的备份都可在界面里选择还原；还原前当前配置会另存为新备份。还原只覆盖本工具写过的文件（配置，以及应用时写过的目录文件），不删除任何钥匙串条目。
+
 ## 使用边界
 
 1. 填写提供方地址与模型 ID。`https://api.example.com/v1` 和 `model-id` **仅是示例**，不是推荐服务或可用模型声明。
 2. 如需读取模型列表，先核对目标地址与将使用的凭据，再单独确认。请求可能把认证信息发送给该提供方；取消则不请求。返回的列表只是元数据，**不证明 Responses API 兼容性、模型可用性、账号权限或 Codex 模型选择器可见性**。
-3. 预览配置变更，明确确认后应用。WeSwitch 不写自定义模型目录文件，也不保证 Codex 模型选择器会出现该模型。
+3. 预览配置变更，明确确认后应用。是否写入模型目录由你勾选决定；未勾选时目录文件与 `model_catalog_json` 均不变，模型也不会出现在桌面端选择器里。
 4. 保存工作，完全退出 Codex 后重新打开，并在新会话中检查。项目配置、profile、启动参数或当前线程选择可能覆盖全局默认值；本工具不强制覆盖它们。
 
 **环境变量模式：** 配置中只保存变量名；WeSwitch 不配置系统环境变量，Finder 启动的应用也不保证继承终端变量。模型发现只可读取与**已保存的同一提供方、同一地址、同一变量名**匹配的进程环境变量，不提供任意环境变量读取。新提供方可手填模型 ID，或使用表单临时 Key 进行经确认的列表请求；获取列表本身不会保存 Key。复用的服务保留原来的环境，改变环境变量后需先停止旧服务。
@@ -95,9 +110,9 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 在本机 macOS 上构建当前架构的应用：
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.2.0
+.venv/bin/python scripts/build_macos.py --version v0.3.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.2.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.3.0 --output "$HOME/WeSwitch release"
 ```
 
 构建脚本不安装依赖。入口为 `launch_desktop.py`；打包 `index.html`、`i18n.js` 以及存在时的 `assets/WeSwitch.icns`。工作文件与 spec 留在 `build/`，默认输出在 `dist/`；已有应用或同版本压缩包不会被覆盖，重复构建请指定新的输出目录。脚本校验 Python 与应用可执行文件架构，再用 `ditto` 保留 bundle 元数据生成 zip 和 SHA-256 文件。初始 GitHub Release 工作流只发布 arm64 应用。
@@ -105,7 +120,7 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 Release 工作流接受 `v*` 标签推送，或从默认分支手动指定**已存在**的稳定版本标签；PR 不发布，只有发布 job 拥有 `contents: write` 权限，不使用长期密钥。请先完成代码审查和测试，再创建、推送版本标签。手动重试命令：
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.2.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.3.0
 ```
 
 ## 许可证

@@ -17,11 +17,12 @@ import urllib.request
 import webbrowser
 
 from config_core import ConfigError, ConfigStore, atomic_write
+from connection_test import PROTOCOL, test_connection
 from model_discovery import discover_models
 from backend_i18n import translate_response, _EXACT_TRANSLATIONS, _TEMPLATES
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 MAX_BODY = 65536
 
 
@@ -46,12 +47,14 @@ class LocalServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.store = store
         self.discovery_slots = threading.BoundedSemaphore(2)
+        # A connection test spends real quota, so only one may run at a time.
+        self.connection_slots = threading.BoundedSemaphore(1)
         self.token = token or secrets.token_urlsafe(32)
         self.origin = f"http://127.0.0.1:{self.server_port}"
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "WeSwitch/0.2.0"
+    server_version = "WeSwitch/0.3.0"
     sys_version = ""
 
     def log_message(self, *_):
@@ -130,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted(True):
             return
-        if self.path not in ("/api/preview", "/api/apply", "/api/models"):
+        if self.path not in ("/api/preview", "/api/apply", "/api/models", "/api/connection-test", "/api/rollback"):
             self.error("接口不存在。", "not_found", 404)
             return
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -166,6 +169,15 @@ class Handler(BaseHTTPRequestHandler):
                     result = discover_models(self.server.store, payload)
                 finally:
                     self.server.discovery_slots.release()
+            elif self.path == "/api/connection-test":
+                if not self.server.connection_slots.acquire(blocking=False):
+                    raise ConfigError("已有连接测试正在进行，请等待完成后重试。", "connection_busy", 429)
+                try:
+                    result = test_connection(self.server.store, payload)
+                finally:
+                    self.server.connection_slots.release()
+            elif self.path == "/api/rollback":
+                result = self.server.store.restore(payload)
             else:
                 result = self.server.store.apply(payload)
             self.send(200, result)

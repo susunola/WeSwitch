@@ -22,6 +22,11 @@ import tomlkit
 from keychain import Keychain, KeychainError, SERVICE
 
 
+MAX_MODELS_PER_PROVIDER = 100
+# Codex profiles are the supported way to keep several models under one provider.
+PROFILE_KEYS = ("model", "model_provider", "model_reasoning_effort")
+
+
 class ConfigError(Exception):
     def __init__(self, message, code="invalid", status=400):
         super().__init__(message)
@@ -83,6 +88,22 @@ def validate_url(value):
         raise ConfigError("API 地址必须为 HTTPS，或本机 localhost / 127.0.0.1 的 HTTP；不允许内嵌账号、查询参数或片段。") from None
 
 
+def validate_model(value):
+    # Control characters are rejected, never silently trimmed into a different model ID.
+    if any(ord(c) < 32 or ord(c) == 127 for c in str(value)):
+        raise ConfigError("模型 ID 为空、过长或包含空格；请填写服务商提供的精确 ID。")
+    value = str(value).strip()
+    if not value or len(value) > 200 or re.search(r"\s", value):
+        raise ConfigError("模型 ID 为空、过长或包含空格；请填写服务商提供的精确 ID。")
+    return value
+
+
+def profile_slug(model):
+    """Derive a Codex profile name from a model ID."""
+    slug = re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug) or "model"
+
+
 def text(payload, name, limit=200, required=True):
     value = payload.get(name, "")
     if not isinstance(value, str):
@@ -103,9 +124,25 @@ def normalize(payload):
         raise ConfigError("供应商 ID 请以小写字母开头，仅使用小写字母、数字、下划线和短横线。")
     if provider_id in {"openai", "ollama", "lmstudio", "azure", "openai-chat-completions"}:
         raise ConfigError("请使用独立供应商 ID，例如 my-gateway；不要覆盖内置供应商。")
-    model = text(payload, "model", 200)
-    if re.search(r"\s", model):
-        raise ConfigError("模型 ID 不能包含空格；请填写服务商提供的精确 ID。")
+    raw_models = payload.get("models")
+    if raw_models is None and isinstance(payload.get("model"), str) and payload["model"].strip():
+        # v0.1 clients send a single model; keep accepting it.
+        raw_models = [payload["model"]]
+    if not isinstance(raw_models, list) or not raw_models:
+        raise ConfigError("请至少添加一个模型 ID，可一次添加多个。")
+    if len(raw_models) > MAX_MODELS_PER_PROVIDER:
+        raise ConfigError(f"一次最多添加 {MAX_MODELS_PER_PROVIDER} 个模型；请分批添加。")
+    models = []
+    for item in raw_models:
+        if not isinstance(item, str):
+            raise ConfigError("模型 ID 必须是文本。")
+        model = validate_model(item)
+        if model in models:
+            raise ConfigError("模型 ID 重复，请删除重复项后重试。")
+        models.append(model)
+    default_model = validate_model(payload.get("default_model", models[0]))
+    if default_model not in models:
+        raise ConfigError("默认模型必须是已添加的模型之一。")
     auth_mode = text(payload, "auth_mode", 20)
     if auth_mode not in {"keychain", "env", "none"}:
         raise ConfigError("不支持的认证方式。")
@@ -121,11 +158,19 @@ def normalize(payload):
     for key in ("set_default", "has_key"):
         if type(payload.get(key, True if key == "set_default" else False)) is not bool:
             raise ConfigError(f"字段 {key} 必须为布尔值。")
+    save_profiles = payload.get("save_profiles", True)
+    if type(save_profiles) is not bool:
+        raise ConfigError("字段 save_profiles 必须为布尔值。")
+    if len(provider_id) + 1 + max(len(profile_slug(m)) for m in models) > 80:
+        raise ConfigError("模型 ID 过长，无法生成合规的 profile 名称；请缩短模型 ID 或供应商 ID。")
     return {
         "provider_id": provider_id,
         "name": text(payload, "name", 120),
         "base_url": base_url,
-        "model": model,
+        "models": models,
+        "default_model": default_model,
+        "model": default_model,
+        "save_profiles": save_profiles,
         "auth_mode": auth_mode,
         "env_key": env_key,
         "reasoning_effort": effort,
@@ -144,6 +189,15 @@ def managed_account(provider):
             and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}\.[a-f0-9]{24}", args[4])):
         return args[4]
     return None
+
+
+def managed_profile(profile):
+    """True only when a profile carries just the keys this tool writes."""
+    return isinstance(profile, dict) and set(profile) <= set(PROFILE_KEYS)
+
+
+def profile_names(provider_id, models):
+    return [(model, provider_id + "-" + profile_slug(model)) for model in models]
 
 
 class ConfigStore:
@@ -215,10 +269,16 @@ class ConfigStore:
             providers = []
             for key, provider in data.get("model_providers", {}).items():
                 account = managed_account(provider)
+                switchable = []
+                for name, profile in (data.get("profiles") or {}).items():
+                    if (isinstance(profile, dict) and profile.get("model_provider") == key
+                            and managed_profile(profile) and isinstance(profile.get("model"), str)):
+                        switchable.append({"profile": name, "model": profile["model"]})
                 providers.append({
                     "id": key, "name": provider.get("name", key),
                     "base_url": safe_url(provider.get("base_url", "")),
                     "model": data.get("model", "") if data.get("model_provider") == key else "",
+                    "switchable_models": switchable,
                     "auth_mode": "keychain" if account else "env" if provider.get("env_key") else "external" if provider.get("auth") or provider.get("requires_openai_auth") or provider.get("experimental_bearer_token") else "none",
                     "env_key": provider.get("env_key", ""), "managed_credential": bool(account),
                 })
@@ -281,8 +341,24 @@ class ConfigStore:
             else:
                 warnings.append("无密钥模式只适用于本机无需认证的服务。")
             catalog, slugs = self.catalog_info(data)
-            if f["model"] not in slugs:
-                warnings.append("此模型不在现有本地目录中。将保留目录不动，桌面选择器可能显示 Custom、隐藏它或拒绝选择；需要重启后验证。")
+            missing = [m for m in f["models"] if m not in slugs]
+            if missing:
+                warnings.append(
+                    f"这些模型不在现有本地目录中：{'、'.join(missing)}"
+                    f"。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。")
+            targets = profile_names(f["provider_id"], f["models"])
+            existing_profiles = data.get("profiles") or {}
+            if not isinstance(existing_profiles, dict):
+                raise ConfigError("现有 profiles 配置格式异常，未做修改。")
+            if f["save_profiles"]:
+                reserved = data.get("profile")
+                if isinstance(reserved, str) and not managed_profile(existing_profiles.get(reserved, {})):
+                    reserved = None
+                for _, name in targets:
+                    current = existing_profiles.get(name)
+                    if current is not None and (
+                            not managed_profile(current) or current.get("model_provider") != f["provider_id"]):
+                        raise ConfigError(f"profile 名称 {name} 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。")
             provider = tomlkit.table()
             provider.add("name", f["name"])
             provider.add("base_url", f["base_url"])
@@ -302,6 +378,12 @@ class ConfigStore:
                 provider.add("env_key", f["env_key"])
             snippet = tomlkit.document()
             changes = [f"{'更新' if existing else '添加'}供应商：{provider_id}", "保留现有模型目录和其他供应商"]
+            if len(f["models"]) > 1:
+                changes.append(f"一次添加 {len(f['models'])} 个模型：{'、'.join(f['models'])}")
+            if f["save_profiles"]:
+                others = [n for m, n in targets if m != f["default_model"]]
+                changes.append(f"为其余模型写入可切换 profile：{'、'.join(others)}" if others
+                               else f"写入可切换 profile：{targets[0][1]}")
             if f["set_default"]:
                 for target in (doc, snippet):
                     target["model"] = f["model"]
@@ -327,11 +409,38 @@ class ConfigStore:
             doc["model_providers"][provider_id] = provider
             snippet["model_providers"] = tomlkit.table()
             snippet["model_providers"][provider_id] = copy.deepcopy(provider)
+            managed_names = {name for _, name in targets}
+            if f["save_profiles"]:
+                if "profiles" not in doc:
+                    doc["profiles"] = tomlkit.table()
+                for model, name in targets:
+                    profile = tomlkit.table()
+                    profile.add("model", model)
+                    profile.add("model_provider", provider_id)
+                    if f["reasoning_effort"]:
+                        profile.add("model_reasoning_effort", f["reasoning_effort"])
+                    doc["profiles"][name] = profile
+                    (snippet.setdefault("profiles", tomlkit.table()))[name] = copy.deepcopy(profile)
+            # Stale profiles of this provider that are no longer in the batch would silently
+            # point at models the user removed, so drop only those this tool manages.
+            for name, current in list((existing_profiles or {}).items()):
+                if (name not in managed_names and managed_profile(current)
+                        and current.get("model_provider") == provider_id):
+                    doc.get("profiles", {}).pop(name, None)
+                    changes.append(f"移除不再选择的托管 profile：{name}（原值完整保留在备份中）")
             rendered = tomlkit.dumps(doc).encode("utf-8")
             # Independent parser catches root/table placement regressions before writing.
             parsed = tomllib.loads(rendered.decode("utf-8"))
             if f["set_default"] and (parsed.get("model") != f["model"] or parsed.get("model_provider") != provider_id):
                 raise ConfigError("生成的配置校验失败，停止写入。", "internal", 500)
+            if f["save_profiles"]:
+                parsed_profiles = parsed.get("profiles", {})
+                for model, name in targets:
+                    entry = parsed_profiles.get(name)
+                    if (not isinstance(entry, dict) or entry.get("model") != model
+                            or entry.get("model_provider") != provider_id
+                            or (f["reasoning_effort"] and entry.get("model_reasoning_effort") != f["reasoning_effort"])):
+                        raise ConfigError("生成的 profile 校验失败，停止写入。", "internal", 500)
             untouched_before = copy.deepcopy(data)
             untouched_after = copy.deepcopy(parsed)
             for d in (untouched_before, untouched_after):
@@ -339,6 +448,13 @@ class ConfigStore:
                 providers.pop(provider_id, None)
                 if not providers:
                     d.pop("model_providers", None)
+                kept = d.get("profiles", {})
+                for name, current in list(kept.items()):
+                    if name in managed_names or (managed_profile(current)
+                                                 and current.get("model_provider") == provider_id):
+                        kept.pop(name)
+                if not kept:
+                    d.pop("profiles", None)
                 if f["set_default"]:
                     for key in ("model", "model_provider", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity", "model_context_window", "model_auto_compact_token_limit"):
                         d.pop(key, None)
@@ -350,7 +466,10 @@ class ConfigStore:
                 "plan_id": plan_id, "revision": revision, "changes": changes, "warnings": warnings,
                 "files": [str(self.path), str(self.backup_root / backup_id / "config.toml")],
                 "snippet": tomlkit.dumps(snippet), "provider_id": provider_id,
-                "model": f["model"], "set_default": f["set_default"],
+                "model": f["model"], "models": f["models"], "default_model": f["default_model"],
+                "set_default": f["set_default"], "save_profiles": f["save_profiles"],
+                "profiles": [{"model": m, "profile": n, "default": m == f["default_model"]}
+                             for m, n in targets] if f["save_profiles"] else [],
             }
             self.plans = {k: v for k, v in self.plans.items() if time.monotonic() - v["created"] < 900}
             if len(self.plans) >= 100:
@@ -407,6 +526,8 @@ class ConfigStore:
                     "created": datetime.now(timezone.utc).isoformat(), "config_path": str(self.path),
                     "existed": plan["revision"] != "missing", "before_sha256": plan["revision"],
                     "after_sha256": digest(plan["rendered"]), "provider_id": f["provider_id"],
+                    "models": f["models"], "default_model": f["default_model"],
+                    "profiles": [{"model": m, "profile": n} for m, n in profile_names(f["provider_id"], f["models"])] if f["save_profiles"] else [],
                     "credential_recovery": "Existing Keychain items were not overwritten or deleted.",
                     "applied": False,
                 }
@@ -432,7 +553,11 @@ class ConfigStore:
                 self.plans.pop(payload["plan_id"], None)
                 return {
                     "ok": True, "backup_path": str(backup), "config_path": str(self.path),
-                    "provider_id": f["provider_id"], "model": f["model"], "set_default": f["set_default"],
+                    "provider_id": f["provider_id"], "model": f["model"], "models": f["models"],
+                    "default_model": f["default_model"], "set_default": f["set_default"],
+                    "save_profiles": f["save_profiles"],
+                    "profiles": [{"model": m, "profile": n, "default": m == f["default_model"]}
+                                 for m, n in profile_names(f["provider_id"], f["models"])] if f["save_profiles"] else [],
                     "keychain_saved": bool(secret), "connection_tested": False, "restart_required": True,
                     "message": "配置已备份并写入。请保存工作，完全退出应用（⌘Q）后重新打开，再用新会话验证模型。",
                 }

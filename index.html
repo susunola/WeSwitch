@@ -74,23 +74,62 @@
           $('models-status').dataset.tone = tone;
         }
 
-        function renderModelOptions() {
-          const select = $('model-select');
-          const selected = select.value;
-          const query = $('model-search').value.trim().toLowerCase();
-          const matches = models.filter((id) => id.toLowerCase().includes(query));
-          const placeholder = document.createElement('option');
-          placeholder.value = '';
-          i18n.setText(placeholder, matches.length ? '请选择模型（不会自动选择）' : '没有匹配项；可调整搜索或手动填写');
-          select.replaceChildren(placeholder);
-          matches.forEach((id) => {
+        // One model ID per line; duplicates are collapsed without reordering.
+        function parseModelIds(value = fields.model.value) {
+          return [...new Set(String(value).split('\n').map((line) => line.trim()).filter(Boolean))];
+        }
+
+        function syncDefaultModelOptions() {
+          const select = $('default_model');
+          const ids = parseModelIds();
+          const previous = select.value;
+          select.replaceChildren();
+          const first = document.createElement('option');
+          first.value = '';
+          i18n.setText(first, ids.length ? '默认使用第一行' : '填写模型 ID 后可选');
+          select.append(first);
+          ids.forEach((id) => {
             const option = document.createElement('option');
             option.value = id;
             option.textContent = id;
             select.append(option);
           });
-          select.value = matches.includes(selected) ? selected : '';
+          select.disabled = ids.length === 0;
+          select.value = ids.includes(previous) ? previous : '';
+        }
+
+        function defaultModel() {
+          return $('default_model').value || parseModelIds()[0] || '';
+        }
+
+        function renderModelOptions() {
+          const select = $('model-select');
+          const selected = [...select.selectedOptions].map((option) => option.value);
+          const query = $('model-search').value.trim().toLowerCase();
+          const matches = models.filter((id) => id.toLowerCase().includes(query));
+          select.replaceChildren();
+          matches.forEach((id) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id;
+            select.append(option);
+            if (selected.includes(id)) option.selected = true;
+          });
+          select.disabled = matches.length === 0;
+          $('add-selected-models').disabled = ![...select.selectedOptions].length;
           text('models-filter-status', message('显示 {shown} / {total} 个模型 ID', { shown: matches.length, total: models.length }));
+        }
+
+        function addSelectedModels() {
+          const picked = [...$('model-select').selectedOptions].map((option) => option.value);
+          if (!picked.length) return;
+          const current = parseModelIds();
+          const merged = [...new Set([...current, ...picked])];
+          fields.model.value = merged.join('\n');
+          syncDefaultModelOptions();
+          invalidatePlan();
+          setModelsStatus(message('已加入 {count} 个模型 ID，共 {total} 个；可选择默认模型后预览。',
+            { count: picked.length, total: merged.length }), 'green');
         }
 
         function resetModels() {
@@ -462,7 +501,8 @@
             provider_id: fields.provider_id.value.trim() || 'custom',
             name: fields.name.value.trim(),
             base_url: fields.base_url.value.trim(),
-            model: fields.model.value.trim(),
+            models: parseModelIds(),
+            default_model: defaultModel(),
             auth_mode: fields.auth_mode.value,
             env_key: fields.auth_mode.value === 'env' ? fields.env_key.value.trim() : '',
             set_default: fields.set_default.checked,
@@ -488,7 +528,7 @@
           } catch (_) {
             invalid('base_url', '请输入完整 HTTPS 地址，或仅指向本机回环地址的 HTTP 地址；不要包含账号密码或片段。');
           }
-          if (!payload.model) invalid('model', '请填写提供方实际支持的模型 ID。');
+          if (!payload.models.length || !payload.default_model) invalid('model', '请填写提供方实际支持的模型 ID。');
           if (!authModes.has(payload.auth_mode) || !efforts.has(fields.reasoning_effort.value)) {
             showError('表单选项无效，请重新选择。');
             return null;
@@ -585,13 +625,19 @@
           fields.provider_id.value = provider.id;
           fields.name.value = provider.name || '';
           fields.base_url.value = provider.base_url || '';
-          fields.model.value = provider.model || '';
+          // Reload every model previously saved for this provider, not only the current one.
+          const savedModels = [...new Set((Array.isArray(provider.switchable_models) ? provider.switchable_models : [])
+            .map((entry) => entry && entry.model).filter(Boolean))];
+          fields.model.value = (savedModels.length ? savedModels
+            : [provider.model].filter(Boolean)).join('\n');
           fields.auth_mode.value = authModes.has(provider.auth_mode) ? provider.auth_mode : 'keychain';
           fields.env_key.value = provider.env_key || '';
           fields.reasoning_effort.value = '';
           fields.set_default.checked = true;
           showEditor();
           syncAuth();
+          syncDefaultModelOptions();
+          $('default_model').value = provider.model || '';
           renderProviders(state.providers);
           updateControls();
           text('editing-label', '编辑已保存的提供方');
@@ -885,7 +931,7 @@
         function handleInput(event) {
           if (applying || event.target.id === 'model-search' || event.target.id === 'model-select') return;
           if (discoveryFields.includes(event.target.name)) resetModels();
-          if (event.target.name === 'model') $('model-select').value = fields.model.value;
+          if (event.target.name === 'model') syncDefaultModelOptions();
           invalidatePlan();
           clearError();
           $('workflow').dataset.step = 'edit';
@@ -906,11 +952,10 @@
           if (event.key === 'Enter') event.preventDefault();
         });
         $('model-select').addEventListener('change', () => {
-          const selected = $('model-select').value;
-          if (!sessionAllowed || !stateReady || stateLoading || applying || modelsLoading || !models.includes(selected)) return;
-          fields.model.value = selected;
-          handleInput({ target: fields.model });
+          $('add-selected-models').disabled = ![...$('model-select').selectedOptions].length;
         });
+        $('add-selected-models').addEventListener('click', addSelectedModels);
+        $('default_model').addEventListener('change', invalidatePlan);
         form.addEventListener('reset', () => {
           resetModels();
           invalidatePlan('表单已重置，请重新预览。');
@@ -1483,13 +1528,18 @@
                   <div data-i18n class="field"><label data-i18n class="field-label" for="provider_id">提供方 ID<code>provider_id</code></label><input id="provider_id" name="provider_id" class="mono" type="text" value="custom" data-i18n-placeholder placeholder="custom" pattern="[a-z0-9_-]+" spellcheck="false" autocapitalize="none" aria-describedby="provider-id-hint provider_id-error"><p data-i18n id="provider-id-hint" class="field-hint">小写字母、数字、_ 或 -；留空使用 custom。</p><p data-i18n id="provider_id-error" class="field-error" hidden></p></div>
                   <div data-i18n class="field full"><label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p></div>
                   <div data-i18n class="field full">
-                    <label data-i18n class="field-label" for="model">模型 ID<code>model</code></label>
+                    <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
                     <div data-i18n class="model-input-row">
-                      <input id="model" name="model" class="mono" type="text" data-i18n-placeholder placeholder="model-id" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error">
+                      <textarea id="model" name="model" class="mono" rows="3" data-i18n-placeholder placeholder="deepseek-reasoner&#10;deepseek-chat" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
                       <button data-i18n id="fetch-models" class="button" type="button" disabled aria-controls="models-panel" aria-describedby="models-consent models-endpoint models-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span data-i18n id="fetch-models-label">获取模型列表</span></button>
                     </div>
-                    <p data-i18n id="model-hint" class="field-hint">可直接手动填写，或仅用 API 地址与认证信息获取列表；无需先填写名称、模型或推理强度。列表不证明 Responses API 兼容性或生成能力。</p>
+                    <p data-i18n id="model-hint" class="field-hint">每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
                     <p data-i18n id="model-error" class="field-error" hidden></p>
+                    <div data-i18n class="field default-model-field">
+                      <label data-i18n class="field-label" for="default_model">默认模型<span data-i18n class="field-tag">写入根级 model</span></label>
+                      <select id="default_model" aria-describedby="default-model-hint" disabled><option data-i18n value="">默认使用第一行</option></select>
+                      <p data-i18n id="default-model-hint" class="field-hint">选中的模型写入根级 model；其余模型保存为可切换 profile，供你在 Codex 中切换。</p>
+                    </div>
                     <div data-i18n class="models-discovery">
                       <p data-i18n id="models-consent" class="field-hint">获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
                       <code data-i18n id="models-endpoint" class="file-path">填写 API 地址后显示 GET …/models。</code>
@@ -1498,8 +1548,9 @@
                       <div data-i18n id="models-panel" aria-busy="false" hidden>
                         <label data-i18n class="field-label" for="model-search">搜索已获取的模型<span data-i18n class="field-tag">仅本地筛选</span></label>
                         <input id="model-search" type="search" data-i18n-placeholder placeholder="按模型 ID 筛选" autocomplete="off" spellcheck="false" aria-controls="model-select" aria-describedby="models-filter-status" disabled>
-                        <label data-i18n class="field-label" for="model-select">从列表选择模型</label>
-                        <select id="model-select" aria-describedby="model-hint models-filter-status" disabled><option data-i18n value="">请选择模型（不会自动选择）</option></select>
+                        <label data-i18n class="field-label" for="model-select">从列表选择模型<span data-i18n class="field-tag">可按住 ⌘/Ctrl 多选</span></label>
+                        <select id="model-select" multiple size="6" aria-describedby="model-hint models-filter-status" disabled></select>
+                        <button data-i18n id="add-selected-models" class="button" type="button" disabled>加入模型列表</button>
                         <p data-i18n id="models-filter-status" class="field-hint" role="status" aria-live="polite"></p>
                       </div>
                     </div>
@@ -1558,7 +1609,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">只展示本地服务返回的备份，不执行恢复或删除操作。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.1.0</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.2.0</span></footer>
     </main>
   </div>
 </body>

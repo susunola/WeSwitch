@@ -239,6 +239,10 @@ class ConfigStoreTests(ConfigFixture):
             "name": "Regression Provider", "base_url": "https://gateway.example.invalid/v1",
             "wire_api": "responses", "requires_openai_auth": False, "env_key": "REGRESSION_API_KEY",
         }
+        expected["profiles"]["regression-provider-new-model"] = {
+            "model": "new-model", "model_provider": "regression-provider",
+            "model_reasoning_effort": "medium",
+        }
         self.assertEqual(after, expected)
         self.assertEqual(self.catalog.read_bytes(), CATALOG)
         self.assertTrue(result["ok"])
@@ -555,7 +559,13 @@ class ConfigStoreTests(ConfigFixture):
         before, after = tomllib.loads(ORIGINAL.decode()), tomllib.loads(self.path.read_text())
         for field in MODEL_SETTINGS:
             self.assertEqual(after[field], before[field], field)
-        self.assertEqual(after["profiles"], before["profiles"])
+        # Existing profiles are preserved even when no default model is switched.
+        self.assertEqual(after["profiles"]["review"], before["profiles"]["review"])
+        managed = after["profiles"]["regression-provider-new-model"]
+        self.assertEqual(managed["model"], "new-model")
+        self.assertEqual(managed["model_provider"], "regression-provider")
+        self.assertEqual(managed["model_reasoning_effort"], "xhigh")
+        after["profiles"].pop("regression-provider-new-model")
         after["model_providers"].pop("regression-provider")
         self.assertEqual(after, before)
         self.assertNotIn("model", tomllib.loads(preview["snippet"]))
@@ -574,7 +584,8 @@ class ConfigStoreTests(ConfigFixture):
         parsed = tomllib.loads(self.path.read_text())
         for setting in MODEL_SETTINGS - {"model", "model_provider"}:
             self.assertNotIn(setting, parsed)
-        self.assertEqual(parsed["profiles"], tomllib.loads(ORIGINAL.decode())["profiles"])
+        self.assertEqual(parsed["profiles"]["review"], tomllib.loads(ORIGINAL.decode())["profiles"]["review"])
+        self.assertNotIn("model_reasoning_effort", parsed["profiles"]["regression-provider-new-model"])
         self.assertEqual(parsed["sandbox_mode"], "workspace-write")
 
     def test_existing_provider_retry_settings_survive_an_update(self):

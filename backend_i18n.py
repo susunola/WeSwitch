@@ -26,8 +26,24 @@ _EXACT_TRANSLATIONS = {
         "The provider ID must start with a lowercase letter and contain only lowercase letters, digits, underscores, and hyphens.",
     "请使用独立供应商 ID，例如 my-gateway；不要覆盖内置供应商。":
         "Use a separate provider ID, such as my-gateway; do not overwrite a built-in provider.",
-    "模型 ID 不能包含空格；请填写服务商提供的精确 ID。":
-        "The model ID cannot contain whitespace; enter the exact ID supplied by the provider.",
+    "模型 ID 为空、过长或包含空格；请填写服务商提供的精确 ID。":
+        "The model ID is empty, too long, or contains whitespace; enter the exact ID supplied by the provider.",
+    "请至少添加一个模型 ID，可一次添加多个。":
+        "Add at least one model ID; several can be added at once.",
+    "模型 ID 必须是文本。":
+        "The model ID must be text.",
+    "模型 ID 重复，请删除重复项后重试。":
+        "A model ID is duplicated; remove the duplicate and try again.",
+    "默认模型必须是已添加的模型之一。":
+        "The default model must be one of the models that were added.",
+    "模型 ID 过长，无法生成合规的 profile 名称；请缩短模型 ID 或供应商 ID。":
+        "The model ID is too long to build a valid profile name; shorten the model ID or the provider ID.",
+    "字段 save_profiles 必须为布尔值。":
+        "Field save_profiles must be a boolean.",
+    "现有 profiles 配置格式异常，未做修改。":
+        "The existing profiles configuration has an invalid format. No changes were made.",
+    "生成的 profile 校验失败，停止写入。":
+        "The generated profile failed validation. Writing has been stopped.",
     "不支持的认证方式。":
         "Unsupported authentication method.",
     "无密钥模式仅限本机服务；远程服务请选择钥匙串或环境变量。":
@@ -72,8 +88,6 @@ _EXACT_TRANSLATIONS = {
         "The environment variable must be available to the desktop application process; this tool neither writes shell configuration nor injects variables into the Dock environment.",
     "无密钥模式只适用于本机无需认证的服务。":
         "Keyless mode is only for local services that require no authentication.",
-    "此模型不在现有本地目录中。将保留目录不动，桌面选择器可能显示 Custom、隐藏它或拒绝选择；需要重启后验证。":
-        "This model is not in the existing local catalog. The catalog will remain unchanged; the desktop selector may display Custom, hide the model, or refuse selection. Verify after restarting.",
     "保留现有模型目录和其他供应商":
         "Preserve the existing model catalog and other providers",
     "清除旧的推理强度，避免向新模型发送不支持的选项":
@@ -264,6 +278,20 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
      "Field {field} must be a boolean."),
     (r"\A更新供应商：(?P<provider>[^\r\n]+)\Z", "Update provider: {provider}"),
     (r"\A添加供应商：(?P<provider>[^\r\n]+)\Z", "Add provider: {provider}"),
+    (r"\A一次添加 (?P<count>[0-9]+) 个模型：(?P<models>[^\r\n]+)\Z",
+     "Add {count} models at once: {models}"),
+    (r"\A为其余模型写入可切换 profile：(?P<names>[^\r\n]+)\Z",
+     "Write switchable profiles for the remaining models: {names}"),
+    (r"\A写入可切换 profile：(?P<names>[^\r\n]+)\Z",
+     "Write a switchable profile: {names}"),
+    (r"\A一次最多添加 (?P<limit>[0-9]+) 个模型；请分批添加。\Z",
+     "At most {limit} models can be added at once; add them in batches."),
+    (r"\A移除不再选择的托管 profile：(?P<name>[^\r\n]+)（原值完整保留在备份中）\Z",
+     "Remove the managed profile that is no longer selected: {name} (the original value is fully preserved in the backup)"),
+    (r"\A这些模型不在现有本地目录中：(?P<models>[^\r\n]+)。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。\Z",
+     "These models are not in the existing local catalog: {models}. The catalog will remain unchanged; the desktop selector may display Custom, hide them, or refuse selection. Verify after restarting."),
+    (r"\Aprofile 名称 (?P<name>[^\r\n]+) 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。\Z",
+     "The profile name {name} is already used and contains settings this tool does not write. Choose a different provider ID, or rename or remove that profile manually before retrying."),
     # '未设置' may be the fallback OR an actual model ID. The rendered message
     # cannot distinguish them, so it too must remain verbatim inside a capture.
     (r"\A默认模型：(?P<old>[^\r\n]*) → (?P<new>[^\r\n]+)\Z",
@@ -286,7 +314,7 @@ _MESSAGE_FIELDS = frozenset({"error", "message", "warnings", "changes"})
 # Treat these as opaque even if an unexpected value contains nested message keys.
 _OPAQUE_FIELDS = frozenset({
     "config_path", "revision", "id", "ids", "name", "provider_id", "model_id",
-    "model", "model_provider", "plan_id", "backup_id", "snippet", "snippets",
+    "model", "models", "model_provider", "plan_id", "backup_id", "snippet", "snippets",
     "endpoint", "base_url", "path", "paths", "files", "backup_path", "code",
 })
 

@@ -23,26 +23,40 @@ def extract_messages(source):
 
     Do not count f-string fragments (including conditional labels and fallback
     values) as independent messages. Their entire templates are checked instead.
+    Docstrings and constants reused inside f-strings are not standalone messages.
     """
     fixed = []
     dynamic = []
-
-    class Messages(ast.NodeVisitor):
-        def visit_Expr(self, node):
-            if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
-                self.generic_visit(node)
-
-        def visit_Constant(self, node):
-            if isinstance(node.value, str) and CJK.search(node.value):
-                fixed.append((node.lineno, node.value))
-
-        def visit_JoinedStr(self, node):
+    tree = ast.parse(source)
+    in_fstring = set()
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = getattr(node, "body", [])
+            first = body[0] if body else None
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                docstrings.add(id(first.value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            in_fstring.add(id(node))
+            for part in ast.walk(node):
+                in_fstring.add(id(part))
+            continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
             shape = "".join(part.value if isinstance(part, ast.Constant) else "{}"
                             for part in node.values)
+            # A nested f-string join is one placeholder, not flattened literal parts.
+            if any(not isinstance(part, ast.Constant) for part in node.values):
+                shape = re.sub(r"(?:\{\}){2,}", "{}", shape)
             if CJK.search(shape):
                 dynamic.append((node.lineno, shape))
-
-    Messages().visit(ast.parse(source))
+            continue
+        if not isinstance(node, ast.Constant) or id(node) in in_fstring or id(node) in docstrings:
+            continue
+        if isinstance(node.value, str) and CJK.search(node.value):
+            fixed.append((node.lineno, node.value))
     return fixed, dynamic
 
 
@@ -93,6 +107,34 @@ DYNAMIC_CASES = {
          "Keychain could not be saved (system status -25299). The Codex configuration was not written."),
         ("钥匙串保存未成功（系统状态 50）。未写入 Codex 配置。",
          "Keychain could not be saved (system status 50). The Codex configuration was not written."),
+    ),
+    "一次添加 {} 个模型：{}": (
+        ("一次添加 2 个模型：deepseek-reasoner、deepseek-chat",
+         "Add 2 models at once: deepseek-reasoner、deepseek-chat"),
+    ),
+    "为其余模型写入可切换 profile：{}": (
+        ("为其余模型写入可切换 profile：my-gateway-deepseek-chat",
+         "Write switchable profiles for the remaining models: my-gateway-deepseek-chat"),
+    ),
+    "写入可切换 profile：{}": (
+        ("写入可切换 profile：my-gateway-deepseek-reasoner",
+         "Write a switchable profile: my-gateway-deepseek-reasoner"),
+    ),
+    "移除不再选择的托管 profile：{}（原值完整保留在备份中）": (
+        ("移除不再选择的托管 profile：my-gateway-gpt-4（原值完整保留在备份中）",
+         "Remove the managed profile that is no longer selected: my-gateway-gpt-4 (the original value is fully preserved in the backup)"),
+    ),
+    "这些模型不在现有本地目录中：{}。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。": (
+        ("这些模型不在现有本地目录中：a、b。将保留目录不动，桌面选择器可能显示 Custom、隐藏它们或拒绝选择；需要重启后验证。",
+         "These models are not in the existing local catalog: a、b. The catalog will remain unchanged; the desktop selector may display Custom, hide them, or refuse selection. Verify after restarting."),
+    ),
+    "profile 名称 {} 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。": (
+        ("profile 名称 my-gateway-fast 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。",
+         "The profile name my-gateway-fast is already used and contains settings this tool does not write. Choose a different provider ID, or rename or remove that profile manually before retrying."),
+    ),
+    "一次最多添加 {} 个模型；请分批添加。": (
+        ("一次最多添加 100 个模型；请分批添加。",
+         "At most 100 models can be added at once; add them in batches."),
     ),
     "本地配置界面已启动：{}；仅监听 127.0.0.1。": (
         ("本地配置界面已启动：http://127.0.0.1:18765；仅监听 127.0.0.1。",

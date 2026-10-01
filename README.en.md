@@ -14,6 +14,7 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 - **Consent → byte-exact, verified backup → atomic configuration write.** If no original file exists, its absence is recorded instead of inventing a backup.
 - Newly entered managed API keys live in macOS Keychain, not as secret values in configuration or process arguments.
 - Optional model discovery sends `GET <base>/models` only after separate, explicit consent. No generation calls are made, and listing models is not a compatibility test.
+- **Add several models at once:** one provider entry, one credential, many model IDs (for example Pro and Flash), each saved as a switchable profile.
 
 ## Get started
 
@@ -21,10 +22,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.1.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.2.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.1.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.2.0-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -44,6 +45,15 @@ You can also pass the script's full path to `bash`; no particular working direct
 The launcher searches PATH and known Homebrew locations for Python 3.13, 3.12, 3.11, or another `python3` meeting the 3.11+ minimum. It asks for bilingual consent before creating its dedicated venv and downloading pinned dependencies from `requirements.txt`. It never installs global packages or runs a Homebrew/curl installer, and refuses to overwrite an unrelated environment.
 
 Subsequent launches authenticate and reuse a valid local server for the same configuration directory, then reopen the browser. Stop a source-launched server with `Ctrl+C` in its terminal; closing the browser does not stop it. If environment creation was interrupted, inspect and move aside the incomplete dedicated venv before retrying; the launcher will not overwrite it automatically.
+
+## Add several models at once
+
+One gateway and one credential need only one provider entry: enter **one model ID per line** in the model box, or fetch the list, select several models, and click Add to model list. The preview shows every model written, the default model, and the profile names for the rest.
+
+- Codex configuration has **no** per-provider model list. Several models are saved as named profiles (`profiles.<name>`); see [PROFILES.md](PROFILES.md) for the source-level evidence.
+- The default model is written to the root `model` / `model_provider`; the others are written only as `model`, `model_provider`, and `model_reasoning_effort`, leaving unrelated profile settings untouched.
+- Names are derived from the provider ID and model ID, for example `deepseek-deepseek-chat`. An existing profile of the same name that holds settings this tool does not write is rejected instead of overwritten.
+- Switching depends on the profile support of your Codex build (for example the `profile` setting or `--profile`). **This tool does not guarantee that these models appear in the desktop model picker.** Check your Codex version and enter a model ID manually if needed.
 
 ## Scope and limitations
 
@@ -85,9 +95,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.1.0
+.venv/bin/python scripts/build_macos.py --version v0.2.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.1.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.2.0 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -95,7 +105,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.1.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.2.0
 ```
 
 ## License

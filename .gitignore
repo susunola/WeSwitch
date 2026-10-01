@@ -1,0 +1,44 @@
+# Python and local development
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+.idea/
+.vscode/
+
+# Generated bundles and distribution archives
+/build/
+/dist/
+/outputs/
+*.spec
+*.zip
+*.sha256
+
+# Local configuration, credentials, backups, and session state
+.codex/
+config.toml
+auth.json
+.runtime.json
+.runtime-*.json
+runtime.json
+runtime*.json
+model-ui-backups/
+models_cache.json
+model_catalog*.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.log
+
+# Private development captures and the nonportable legacy launcher
+/ui-*.png
+/screenshots/
+启动配置界面.command

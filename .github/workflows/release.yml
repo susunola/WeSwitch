@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release tag, for example v0.1.0'
+        required: true
+        type: string
+        default: v0.1.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'susunola/WeSwitch' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the version and resolve an existing tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.version || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            printf '%s\n' 'A stable version tag such as v0.1.0 is required.' >&2
+            exit 1
+          fi
+          commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          printf 'tag=%s\ncommit=%s\n' "$RELEASE_TAG" "$commit" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: arm64
+      - name: Verify Apple Silicon Python
+        run: python -c 'import platform; assert platform.machine() == "arm64", platform.machine()'
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run isolated unit tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest discover -s . -p 'test_*.py'
+      - name: Build the native macOS app
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python scripts/build_macos.py --version "$RELEASE_TAG"
+      - name: Smoke-test the standalone executable
+        run: python scripts/smoke_app.py dist/WeSwitch.app/Contents/MacOS/WeSwitch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64.zip
+            dist/WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64.zip.sha256
+
+  release:
+    needs: [prepare, build]
+    if: >-
+      github.repository == 'susunola/WeSwitch' &&
+      startsWith(needs.prepare.outputs.tag, 'v') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64
+          path: release-assets
+      - name: Verify artifacts and publish the existing tag
+        working-directory: release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="WeSwitch-$RELEASE_TAG-macos-arm64.zip"
+          sha256sum --check "$archive.sha256"
+          current_commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
+          test "$current_commit" = "$BUILD_COMMIT"
+          gh release create "$RELEASE_TAG" "$archive" "$archive.sha256" \
+            --repo "$GH_REPO" --verify-tag --title "WeSwitch $RELEASE_TAG" \
+            --notes 'Standalone macOS Apple Silicon (arm64) app; Python is bundled. Chinese is the default UI language, with an English toggle. No Developer ID signing or notarization was performed; the bundle may have only an ad-hoc signature and Gatekeeper may warn or block it. Do not disable Gatekeeper globally. Intel users can use the documented Python 3.11+ source launcher. See the README for local-only operation, consent, backup, and credential boundaries. Model metadata discovery is not a Responses compatibility test.'

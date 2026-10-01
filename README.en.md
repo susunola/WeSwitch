@@ -1,0 +1,103 @@
+# WeSwitch
+
+**Review and safely update Codex Mac model settings in your local browser.**
+
+[简体中文](README.md) · English · [MIT License](LICENSE)
+
+WeSwitch is an independent community project, not affiliated with OpenAI. **Chinese is the default, with an English toggle**. Switching language preserves your form and never reapplies configuration.
+
+[Download the app](https://github.com/susunola/WeSwitch/releases/latest) · [Browse the source](https://github.com/susunola/WeSwitch)
+
+## Review first. Change deliberately.
+
+- Edit providers, model IDs, and default model settings; preview changes before explicitly applying them.
+- **Consent → byte-exact, verified backup → atomic configuration write.** If no original file exists, its absence is recorded instead of inventing a backup.
+- Newly entered managed API keys live in macOS Keychain, not as secret values in configuration or process arguments.
+- Optional model discovery sends `GET <base>/models` only after separate, explicit consent. No generation calls are made, and listing models is not a compatibility test.
+
+## Get started
+
+### Recommended: standalone Apple Silicon app
+
+The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
+
+Once published, download `WeSwitch-v0.1.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+
+```bash
+shasum -a 256 -c WeSwitch-v0.1.0-macos-arm64.zip.sha256
+```
+
+Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
+
+**This release pipeline does not perform Developer ID signing or Apple notarization.** PyInstaller may apply an ad-hoc signature; that is not a verified publisher signature. Gatekeeper can still warn or block launch. Only after verifying the source and deciding to trust the app, use macOS's per-app open confirmation. Do not disable Gatekeeper globally. If you prefer not to run an unnotarized app, review and run the source instead.
+
+### Source fallback: Python 3.11+
+
+Available for Apple Silicon and the initial path for Intel Macs. Extract the complete source distribution, then double-click `Start WeSwitch.command`, or run this from the source directory:
+
+```bash
+bash "Start WeSwitch.command"
+```
+
+You can also pass the script's full path to `bash`; no particular working directory is required. Quote paths containing spaces.
+
+The launcher searches PATH and known Homebrew locations for Python 3.13, 3.12, 3.11, or another `python3` meeting the 3.11+ minimum. It asks for bilingual consent before creating its dedicated venv and downloading pinned dependencies from `requirements.txt`. It never installs global packages or runs a Homebrew/curl installer, and refuses to overwrite an unrelated environment.
+
+Subsequent launches authenticate and reuse a valid local server for the same configuration directory, then reopen the browser. Stop a source-launched server with `Ctrl+C` in its terminal; closing the browser does not stop it. If environment creation was interrupted, inspect and move aside the incomplete dedicated venv before retrying; the launcher will not overwrite it automatically.
+
+## Scope and limitations
+
+1. Enter the provider base URL and model ID. `https://api.example.com/v1` and `model-id` are **illustrative only**, not service recommendations or claims of availability.
+2. To discover models, review the destination and credentials, then approve that request separately. Authentication information may be sent to the selected provider; cancellation makes no request. The result is metadata: it **does not establish Responses API compatibility, model availability, account access, or visibility in Codex's model picker**.
+3. Preview and explicitly apply the configuration changes. WeSwitch does not write a custom model catalog or guarantee that a model appears in Codex's picker.
+4. Save your work, fully quit and reopen Codex, and check a new conversation. Project settings, profiles, launch arguments, and current-thread selections may override global defaults; WeSwitch does not force those overrides to change.
+
+**Environment-variable authentication:** configuration stores the variable name only. WeSwitch does not set system environment variables, and Finder-launched apps may not inherit your shell environment. Model discovery can read only a process variable matching the **same pre-saved provider, base URL, and variable name**; it cannot read arbitrary environment variables. For a new provider, enter a model ID manually or use a temporary key in the form for an explicitly approved list request. Discovery itself does not save that key. A reused server retains its original environment; stop it before relaunching with changed variables.
+
+## Security and local data
+
+| Item | Default location / boundary |
+| --- | --- |
+| Codex configuration | `~/.codex/config.toml`; `CODEX_HOME` is supported and must match the directory actually used by Codex |
+| Configuration backups | `~/.codex/model-ui-backups/`, or under `CODEX_HOME`; legacy directory name retained for existing backups |
+| Managed credentials | macOS Keychain service `local.codex-model-ui`; legacy service name retained for existing entries |
+| Source environment | `~/Library/Application Support/WeSwitch/venv/` |
+| Runtime state | `~/Library/Application Support/WeSwitch/runtime.json`; contains a session token and must not be shared |
+| Browser server | Binds only to `127.0.0.1`; APIs require a session token and enforce Host / Origin checks |
+
+Keychain writes use native security APIs. Reads use the `/usr/bin/security` helper with service/account identifiers, not secret values, in its arguments. Configuration references the helper rather than embedding the key. Existing configuration and byte-exact backups may still contain pre-existing secrets: protect them accordingly.
+
+Do not forward the port or publish the local server as a remote site. Never commit real configuration, keys, runtime state, backups, personal screenshots, or unredacted logs. `.gitignore` is only a safeguard: review an explicit publish whitelist and inspect its contents. The legacy launcher is excluded from public distribution. Before restoring a backup, stop Codex and WeSwitch, inspect the backup, and preserve the current file. Existing Keychain entries are not automatically deleted.
+
+## Development and builds
+
+Run these commands from the source directory after checking that `python3` is 3.11+. Use a new dedicated development environment, not another project's venv.
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s . -p 'test_*.py'
+bash -n "Start WeSwitch.command"
+```
+
+CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration, test-only credentials, and mocked Keychain access. `test_browser.py` is an optional, separately invoked browser test; unittest import must not launch a browser.
+
+Build for your current architecture on macOS:
+
+```bash
+.venv/bin/python scripts/build_macos.py --version v0.1.0
+# Optional: choose a fresh distribution directory.
+.venv/bin/python scripts/build_macos.py --version v0.1.0 --output "$HOME/WeSwitch release"
+```
+
+The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
+
+The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
+
+```bash
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.1.0
+```
+
+## License
+
+[MIT](LICENSE) · Copyright (c) 2026 susunola

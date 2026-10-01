@@ -24,6 +24,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install runtime dependencies
         run: python -m pip install -r requirements.txt
+      - name: Validate workflow files
+        run: |
+          python -m pip install --quiet pyyaml
+          python -c "import pathlib, yaml; files = sorted(pathlib.Path('.github/workflows').glob('*.yml')); [yaml.safe_load(p.read_text(encoding='utf-8')) for p in files]; print('parsed:', ', '.join(p.name for p in files))"
       - name: Run isolated unit tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'

@@ -32,6 +32,13 @@ WIRE_API = "responses"
 # none/minimal/low/medium/high/xhigh/max/ultra/persistent, in that order. Anything
 # outside this set is rejected by Codex before it ever reaches the provider.
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent")
+# Backup directory names start with a UTC timestamp, so sorting them as strings
+# is sorting them in the order they were taken.
+BACKUP_ID = re.compile(r"\d{8}T\d{6}Z-[a-f0-9]{8}")
+# Retention: the newest MAX_BACKUPS, plus the oldest one. The oldest is pinned
+# because it is the only copy of the configuration as it was before this tool
+# was ever applied; without it, a run of applies would delete the way back.
+MAX_BACKUPS = 5
 
 
 class ConfigError(Exception):
@@ -329,7 +336,7 @@ class ConfigStore:
             backups = []
             if self.backup_root.is_dir() and not self.backup_root.is_symlink():
                 for p in sorted(self.backup_root.iterdir(), reverse=True)[:30]:
-                    if not p.is_dir() or p.is_symlink() or not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8}", p.name):
+                    if not p.is_dir() or p.is_symlink() or not BACKUP_ID.fullmatch(p.name):
                         continue
                     try:
                         manifest = json.loads((p / "manifest.json").read_text())
@@ -353,6 +360,10 @@ class ConfigStore:
                 "account": account, "installed": installed,
                 "protocol": WIRE_API,
                 "backups": backups, "keychain_available": self.keychain.available,
+                # Retention is enforced on the next apply or restore, never on load,
+                # so merely opening the UI cannot delete anything. Exposed so the UI
+                # states the rule from the same constants the pruning uses.
+                "backup_keep_recent": MAX_BACKUPS, "backup_keep_oldest": True,
                 "warnings": warnings, "demo": self.demo,
             }
 
@@ -590,6 +601,65 @@ class ConfigStore:
                                    "catalog": catalog_write}
             return public
 
+    def prune_backups(self, protected=()):
+        """Delete backups past the retention limit. The caller holds the write lock.
+
+        Keeps the newest MAX_BACKUPS and always the oldest one, so a long run of
+        applies still leaves a way back to the configuration as it was before this
+        tool was ever applied. Anything else that looks like a backup is removed.
+
+        Only directories directly inside the backup root whose name matches the
+        backup id exactly are ever touched; a symlink is skipped rather than
+        followed, so this can never delete outside the backup directory.
+        """
+        protected = {name for name in protected if isinstance(name, str)}
+        if self.backup_root.is_symlink() or not self.backup_root.is_dir():
+            return []
+        root = self.backup_root.resolve()
+        candidates = []
+        for p in self.backup_root.iterdir():
+            if p.is_symlink() or not BACKUP_ID.fullmatch(p.name) or not p.is_dir():
+                continue
+            candidates.append(p)
+        # Names begin with a UTC timestamp, so string order is chronological order.
+        candidates.sort(key=lambda p: p.name)
+        keep = {p.name for p in candidates[-MAX_BACKUPS:]} | protected
+        # The oldest is pinned because it is the only copy of the configuration as
+        # it was before this tool was ever applied. It is taken from the unprotected
+        # backups so that a clock jumping backwards cannot promote a freshly taken
+        # backup into that role and evict the genuine original.
+        for p in candidates:
+            if p.name not in protected:
+                keep.add(p.name)
+                break
+        removed = []
+        for p in candidates:
+            if p.name in keep:
+                continue
+            # Defense in depth: refuse anything not directly inside the backup root.
+            if p.parent.resolve() != root:
+                continue
+            try:
+                shutil.rmtree(p)
+            except OSError:
+                # A backup that cannot be removed is left in place; retention is
+                # housekeeping, and it must never fail the apply that triggered it.
+                continue
+            removed.append(p.name)
+        return removed
+
+    def _prune_locked(self, protected=()):
+        """Prune while holding the cross-process lock that apply() also takes.
+
+        restore() does not otherwise hold it, and pruning must not race with an
+        apply that is creating a backup of its own.
+        """
+        import fcntl
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(self.backup_root / ".write.lock", flags, 0o600), "wb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return self.prune_backups(protected=protected)
+
     def restore(self, payload):
         """Restore one backup produced by apply(), after an explicit confirmation.
 
@@ -599,7 +669,7 @@ class ConfigStore:
         if not isinstance(payload, dict) or payload.get("confirmed") is not True:
             raise ConfigError("请先确认，才会还原备份。", "confirmation_required")
         backup_id = text(payload, "backup_id", 64)
-        if not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8}", backup_id):
+        if not BACKUP_ID.fullmatch(backup_id):
             raise ConfigError("备份标识无效。", "invalid_backup")
         with self.lock:
             if self.backup_root.is_symlink() or not self.backup_root.is_dir():
@@ -645,9 +715,14 @@ class ConfigStore:
             atomic_write(self.path, stored)
             if self.path.read_bytes() != stored:
                 raise ConfigError("还原后文件再次发生变化，请检查备份目录，不要重复还原。", "conflict", 409)
+            # The safety copy holds the configuration that is no longer live, so it
+            # must survive; the restored backup does not need pinning because its
+            # content is the live configuration now.
+            pruned = self._prune_locked(protected={safety_id})
             return {
                 "ok": True, "backup_id": backup_id, "safety_backup": safety_id,
                 "config_path": str(self.path), "catalog_restored": catalog_restored,
+                "pruned_backups": pruned,
                 "message": "已还原该备份。还原前的配置已另存为新备份，可再次还原；请完全退出应用（⌘Q）后重新打开。",
             }
 
@@ -753,6 +828,10 @@ class ConfigStore:
                 except OSError:
                     pass
                 self.plans.pop(payload["plan_id"], None)
+                # Inside the write lock, so the set that is pruned cannot change
+                # under us. The backup just taken is protected explicitly: if the
+                # clock moved backwards its name could sort older than the limit.
+                pruned = self.prune_backups(protected={plan["backup_id"]})
                 return {
                     "ok": True, "backup_path": str(backup), "config_path": str(self.path),
                     "provider_id": f["provider_id"], "model": f["model"], "models": f["models"],
@@ -761,6 +840,7 @@ class ConfigStore:
                     "profiles": [{"model": m, "profile": n, "default": m == f["default_model"]}
                                  for m, n in profile_names(f["provider_id"], f["models"])] if f["save_profiles"] else [],
                     "keychain_saved": bool(secret), "connection_tested": False, "restart_required": True,
+                    "pruned_backups": pruned,
                     "catalog": {"path": catalog["path"], "added": catalog["added"],
                                 "skipped": catalog["skipped"], "count": catalog["count"]} if catalog else None,
                     "message": "配置已备份并写入。请保存工作，完全退出应用（⌘Q）后重新打开，再用新会话验证模型。",

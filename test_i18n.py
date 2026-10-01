@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parent
 SOURCE_FILES = ("config_core.py", "model_discovery.py", "connection_test.py", "keychain.py",
                 "server.py", "account_info.py")
 CJK = re.compile(r"[\u3400-\u9fff]")
+# Chinese text plus its punctuation, so a run is a whole phrase rather than a
+# fragment broken at a comma.
+CJK_RUN = re.compile(r"[\u3000-\u303f\u3400-\u9fff\uff00-\uffef\u2018-\u201d]{2,}")
 KNOWN = "不支持的认证方式。"
 ENGLISH = "Unsupported authentication method."
 
@@ -555,6 +558,73 @@ class ResponseTests(unittest.TestCase):
         second = i18n.translate_response(first, "en")
         self.assertEqual(second, first)
         self.assertIsNot(first, second)
+
+
+class FrontendTableTests(unittest.TestCase):
+    """The Chinese-to-English table that index.html renders from.
+
+    The browser suite proves what is on screen after a language switch; these
+    checks catch drift statically, so a missing or leftover entry fails in CI
+    rather than only when someone runs the optional browser test.
+    """
+
+    TABLE_START = "const english = Object.freeze({"
+
+    @classmethod
+    def setUpClass(cls):
+        source = (ROOT / "i18n.js").read_text(encoding="utf-8")
+        start = source.index(cls.TABLE_START) + len(cls.TABLE_START)
+        end = source.index("});", start)
+        cls.body = source[start:end]
+        # Entries are one per line, so line matching cannot silently skip one the
+        # way a single global regex across the whole object could. The final entry
+        # legitimately has no trailing comma, and the table carries group comments.
+        cls.lines = [line for line in cls.body.splitlines()
+                     if line.strip() and not line.strip().startswith("//")]
+        cls.entries = {}
+        pattern = re.compile(r"\s*'((?:[^'\\]|\\.)*)': '((?:[^'\\]|\\.)*)',?\s*$")
+        for line in cls.lines:
+            match = pattern.match(line)
+            if match:
+                cls.entries[match.group(1)] = match.group(2)
+        # A key may also be referenced by i18n.js itself, but not by its own table.
+        cls.corpus = ((ROOT / "index.html").read_text(encoding="utf-8")
+                      + source[:start] + source[end:])
+
+    def test_every_table_line_is_a_single_entry(self):
+        self.assertEqual(len(self.entries), len(self.lines),
+                         "an entry did not match the one-line 'zh': 'en' shape")
+
+    def test_every_page_string_has_an_entry(self):
+        runs = self.page_cjk_runs()
+        # A guard against the check going vacuous: if the extraction breaks, every
+        # run would trivially pass and the test would report success while proving
+        # nothing. The page carries several hundred Chinese runs.
+        self.assertGreater(len(runs), 200, "the page scan found implausibly few Chinese runs")
+        uncovered = sorted({run for run in runs
+                            if not any(run in key for key in self.entries)})
+        self.assertEqual(uncovered, [],
+                         "page text has no English entry (a run may be split across "
+                         "elements, or a code comment rather than a message)")
+
+    def test_every_entry_is_still_referenced(self):
+        unused = sorted(key for key in self.entries
+                        if key.strip() and key.strip() not in self.corpus)
+        self.assertEqual(unused, [])
+
+    @classmethod
+    def page_cjk_runs(cls):
+        """Every run of two or more Chinese characters in the page.
+
+        Deliberately not a JavaScript parser: the inline script uses template
+        literals, so a quote-pairing scan swallows whole blocks of code and
+        reports them as strings. Comparing runs against the dictionary needs no
+        parsing at all, and a run that appears in no key is either an
+        untranslated message or a Chinese code comment.
+        """
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
+        return re.findall(CJK_RUN, html)
 
 
 if __name__ == "__main__":

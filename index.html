@@ -49,6 +49,10 @@
         let completed = false;
         let activeProvider = null;
         let sessionAllowed = false;
+        // An apply reports its retention pruning, then refreshes the state, which
+        // rewrites the same status line. The count is handed across that refresh so
+        // the report is not lost the moment the state comes back.
+        let pendingPrune = [];
         const discoveryFields = ['provider_id', 'base_url', 'auth_mode', 'env_key', 'api_key'];
         // The connection test also sends a model ID, so it belongs to the snapshot.
         const connectionFields = [...discoveryFields, 'model'];
@@ -800,8 +804,13 @@
                 typeof data.config_path !== 'string' || typeof data.message !== 'string') {
               throw errorFor('还原结果不完整。请刷新状态并查看备份目录。', 'INVALID_ROLLBACK');
             }
-            setBackupStatus(concat(i18n.server(data.message, responseLanguages.get(data)),
-              ' 还原前的新备份：', raw(data.safety_backup)), 'green');
+            const parts = [i18n.server(data.message, responseLanguages.get(data)),
+                           ' 还原前的新备份：', raw(data.safety_backup)];
+            const pruned = Array.isArray(data.pruned_backups) ? data.pruned_backups : [];
+            if (pruned.length) {
+              parts.push(message(' 已按保留策略清理 {count} 个更早的备份。', { count: pruned.length }));
+            }
+            setBackupStatus(concat(...parts), 'green');
             invalidatePlan('配置已还原，请基于最新配置重新预览。');
             await loadState();
           } catch (error) {
@@ -824,6 +833,15 @@
 
         function stringValue(value, fallback = '未设置') {
           return typeof value === 'string' && value.length > 0 ? raw(value) : fallback;
+        }
+
+        // The retention report is one sentence, and it is appended both to the apply
+        // result and to the status line written by the state refresh that follows, so
+        // the count stays visible instead of flashing and being overwritten.
+        function pruneNote(pruned) {
+          return Array.isArray(pruned) && pruned.length
+            ? message(' 已按保留策略清理 {count} 个更早的备份。', { count: pruned.length })
+            : '';
         }
 
         function setStatus(message, tone = 'neutral') {
@@ -1273,6 +1291,13 @@
           text('backup-count', String(state.backups.length));
           $('backups-empty').hidden = state.backups.length > 0;
           text('backups-empty', '服务尚未返回备份记录。应用配置后，可在这里查看。');
+          // Stated from the constants the pruning itself uses, so the number on
+          // screen cannot drift from the retention actually applied.
+          const keepRecent = state.backup_keep_recent;
+          text('backup-policy', typeof keepRecent === 'number' && keepRecent > 0
+            ? message('只保留最近 {count} 个备份，最早那份始终保留；超出部分会在应用或还原后清理。',
+                      { count: keepRecent })
+            : '备份会按数量自动清理，最早那份始终保留。');
           state.backups.forEach((backup) => {
             const row = document.createElement('li');
             row.className = 'backup-row';
@@ -1330,12 +1355,18 @@
             stateReady = true;
             renderState();
             text('state-freshness', state.demo ? '演示数据 · 不代表实际 Codex 配置' : '来自本地配置 · 不代表连接状态');
-            setStatus(afterApply
+            setStatus(concat(afterApply
               ? '配置已写入，状态已刷新。模型生成未测试；请按下方说明手动重启 Codex。'
               : state.demo ? '当前连接的是演示服务，以下内容不是实际 Codex 配置。' : '本地状态已同步。预览不会写入配置，也不会发送 API Key。',
+              afterApply ? pruneNote(pendingPrune) : ''),
               state.demo ? 'warning' : 'green');
+            // Only this one refresh reports the prune; a later manual refresh must not.
+            pendingPrune = [];
           } catch (error) {
             if (controller !== stateController || controller.signal.aborted) return;
+            // The refresh failed, so this report cannot be shown at all; drop it rather
+            // than leave it to be attributed to some later refresh.
+            pendingPrune = [];
             stateReady = false;
             text('state-freshness', state ? '读取失败 · 显示上次读取的数据，仅供参考' : '未能读取本地配置');
             if (!state) {
@@ -1487,7 +1518,14 @@
             succeeded = true;
             clearSecret();
             renderSuccess(data, appliedPlan);
-            setStatus('本地服务已确认写入。模型生成未测试，尚未重启应用。', 'green');
+            const pruned = Array.isArray(data.pruned_backups) ? data.pruned_backups : [];
+            // Confirms the write at once, and remains the fallback if the state refresh
+            // below is superseded by a newer one. That refresh normally rewrites this
+            // line with the same prune count, so the browser assertions target the final
+            // text; this earlier state is deliberately short-lived and is not asserted.
+            pendingPrune = pruned;
+            setStatus(concat('本地服务已确认写入。模型生成未测试，尚未重启应用。',
+                             pruneNote(pruned)), 'green');
           } catch (error) {
             const uncertain = error.status === 0 || error.status >= 500;
             const note = uncertain
@@ -2239,7 +2277,7 @@
             <div class="usage-meter" id="usage-meter" hidden></div>
           </section>
           <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器只渲染目录条目。勾选“写入模型目录”才会把你的模型合并进去；原始目录文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
-          <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
+          <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><p class="field-hint" id="backup-policy"></p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
           <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
         </aside>
       </div>
@@ -2268,9 +2306,9 @@
 
       <details class="card backups" id="backups-section" tabindex="-1">
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
-        <div data-i18n class="backup-body"><p data-i18n class="backup-note">只展示本地服务返回的备份，不执行恢复或删除操作。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
+        <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.4.0</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.5.0</span></footer>
     </main>
   </div>
 </body>

@@ -17,7 +17,7 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 - **Add several models at once:** one provider entry, one credential, many model IDs (for example Pro and Flash), each saved as a switchable profile.
 - **Optional model catalog write:** the desktop picker renders only the entries of `model_catalog_json`. When enabled, your models are merged into a new catalog file and the existing one is backed up first; when disabled, no catalog file is touched.
 - **Optional connection and protocol check:** after consent, **one minimal request** (at most 16 output tokens) is sent to confirm the endpoint accepts Codex's only wire protocol. It may cost a small amount of quota; it reports the result and saves no key or configuration.
-- **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible.
+- **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible. The backup directory keeps the most recent 5 plus the original, clearing anything beyond that after an apply or a restore.
 - **See what Codex already has first:** plan, account, subscription expiry, and login-token status are read **offline** from local sign-in data, and the installed model list from the local catalog. Models you already have are marked and **left unchecked by default**, so the same model cannot be added twice by accident.
 
 ## Get started
@@ -26,10 +26,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.4.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.5.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.4.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.5.0-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -83,6 +83,8 @@ The connection test sends that request and inspects the reply: a `response` obje
 
 **Rollback:** every applied backup under `~/.codex/model-ui-backups/` can be restored from the UI, and the current configuration is saved as another backup first. A restore only overwrites files this tool wrote (the configuration, and the catalog file written by that apply); it never deletes Keychain items.
 
+**Backup retention:** the directory keeps the most recent **5** backups plus the **oldest one** — the configuration as it was before this tool ever changed it. That original is pinned so a long run of applies stays reversible, and it is never removed. The set therefore settles at 6, and anything beyond that is cleared under the write lock after a successful **apply or restore**; the UI reports how many were cleared. Opening the UI, switching language, previewing, or reading state never deletes a backup — only a real configuration write does. A backup that cannot be removed is left in place and never fails the apply that triggered it.
+
 ## Scope and limitations
 
 1. Enter the provider base URL and model ID. `https://api.example.com/v1` and `model-id` are **illustrative only**, not service recommendations or claims of availability.
@@ -98,6 +100,7 @@ The connection test sends that request and inspects the reply: a `response` obje
 | --- | --- |
 | Codex configuration | `~/.codex/config.toml`; `CODEX_HOME` is supported and must match the directory actually used by Codex |
 | Configuration backups | `~/.codex/model-ui-backups/`, or under `CODEX_HOME`; legacy directory name retained for existing backups |
+| Backup retention | Most recent 5 plus the oldest, capping at 6; cleared after a successful apply or restore, never by merely opening the UI |
 | Managed credentials | macOS Keychain service `local.codex-model-ui`; legacy service name retained for existing entries |
 | Source environment | `~/Library/Application Support/WeSwitch/venv/` |
 | Runtime state | `~/Library/Application Support/WeSwitch/runtime.json`; contains a session token and must not be shared |
@@ -126,9 +129,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.4.0
+.venv/bin/python scripts/build_macos.py --version v0.5.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.4.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.5.0 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -136,7 +139,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.4.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.5.0
 ```
 
 ## License

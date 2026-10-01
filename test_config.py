@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import ctypes
+from datetime import datetime, timedelta, timezone
 import hashlib
 import http.client
 import json
@@ -1418,6 +1419,157 @@ class RestoreTests(ConfigFixture):
         self.assert_error(lambda: self.store.restore({"confirmed": True, "backup_id": backup_id}),
                           "invalid_backup")
         self.assertNotEqual(self.path.read_bytes(), b"# tampered\n")
+
+
+class RetentionTests(ConfigFixture):
+    """The newest MAX_BACKUPS are kept, plus the oldest, which is never removed.
+
+    Pruning only happens while an apply or a restore is already mutating the
+    backup directory, so opening the UI can never delete anything.
+    """
+
+    BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def backup_ids(self):
+        root = self.home / "model-ui-backups"
+        return sorted(p.name for p in root.iterdir()
+                      if p.is_dir() and not p.is_symlink()
+                      and core.BACKUP_ID.fullmatch(p.name))
+
+    def apply_over_seconds(self, times):
+        """Apply once per simulated second.
+
+        A backup id records whole seconds, so two backups taken inside the same
+        second are ordered by their random suffix rather than by time. Driving a
+        fixed clock keeps the ordering assertions deterministic and matches how
+        the identifiers behave in real use, where applies are far apart.
+        """
+        state = {"now": self.BASE}
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                value = state["now"]
+                return value if tz else value.replace(tzinfo=None)
+
+        results = []
+        with mock.patch.object(core, "datetime", Clock):
+            for index in range(times):
+                state["now"] = self.BASE + timedelta(seconds=index)
+                _, result = self.commit()
+                results.append(result)
+        return results
+
+    def test_many_applies_keep_the_newest_five_and_the_original(self):
+        results = self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        kept = self.backup_ids()
+        original = Path(results[0]["backup_path"]).name
+        newest = [Path(r["backup_path"]).name for r in results][-core.MAX_BACKUPS:]
+        self.assertEqual(len(kept), core.MAX_BACKUPS + 1)
+        self.assertIn(original, kept, "the pre-tool configuration must never be pruned")
+        self.assertEqual(set(kept) - {original}, set(newest))
+
+    def test_removals_are_reported_oldest_first_and_only_when_over_the_limit(self):
+        results = self.apply_over_seconds(core.MAX_BACKUPS + 4)
+        self.assertEqual(results[0]["pruned_backups"], [])
+        self.assertEqual(results[core.MAX_BACKUPS]["pruned_backups"], [],
+                         "the set may reach the limit without anything being removed")
+        removed = [name for result in results for name in result["pruned_backups"]]
+        self.assertEqual(len(removed), 3)
+        self.assertEqual(sorted(removed), removed, "removals are reported oldest first")
+        self.assertEqual(set(removed) & set(self.backup_ids()), set())
+
+    def test_state_reports_the_rule_the_pruning_uses(self):
+        state = self.store.state()
+        self.assertEqual(state["backup_keep_recent"], core.MAX_BACKUPS)
+        self.assertIs(state["backup_keep_oldest"], True)
+
+    def test_the_retention_limit_is_five_backups_plus_the_original(self):
+        # The limit is a product decision, so it is pinned by value. Every other
+        # assertion in this class is written in terms of MAX_BACKUPS, so an edit to
+        # the constant alone would satisfy all of them and silently change the rule.
+        self.assertEqual(core.MAX_BACKUPS, 5)
+        self.assertEqual(self.store.state()["backup_keep_recent"], 5)
+
+    def test_a_restore_prunes_too_and_keeps_the_state_it_replaced(self):
+        self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        target = self.backup_ids()[1]
+        restored = self.store.restore({"confirmed": True, "backup_id": target})
+        self.assertTrue(restored["ok"])
+        kept = self.backup_ids()
+        self.assertIn(restored["safety_backup"], kept,
+                      "the configuration that was rolled back must stay recoverable")
+        self.assertIn(kept[0], kept)
+        self.assertLessEqual(len(kept), core.MAX_BACKUPS + 1)
+        # The restored backup is not pinned: its content is the live configuration
+        # now, so dropping it loses nothing and keeps the limit exact.
+        self.assertIn(target, restored["pruned_backups"])
+
+    def test_a_directory_that_is_not_a_backup_is_left_alone(self):
+        root = self.home / "model-ui-backups"
+        self.apply_over_seconds(1)
+        stray = root / "my-own-notes"
+        stray.mkdir()
+        (stray / "keep.txt").write_text("not a backup")
+        self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        self.assertEqual((stray / "keep.txt").read_text(), "not a backup")
+        self.assertTrue((root / ".write.lock").is_file())
+
+    def test_a_symlink_shaped_like_a_backup_is_never_followed_or_removed(self):
+        root = self.home / "model-ui-backups"
+        self.apply_over_seconds(1)
+        outside = self.root / "elsewhere"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("outside the backup directory")
+        link = root / "20260101T000000Z-aaaaaaaa"
+        os.symlink(outside, link)
+        self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual((outside / "keep.txt").read_text(), "outside the backup directory")
+
+    def test_a_backup_that_cannot_be_removed_does_not_fail_the_apply(self):
+        self.apply_over_seconds(1)
+        with mock.patch.object(core.shutil, "rmtree", side_effect=OSError("busy")):
+            results = self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        self.assertTrue(all(result["ok"] for result in results))
+        self.assertTrue(all(result["pruned_backups"] == [] for result in results),
+                        "a removal that failed must not be reported as done")
+
+    def test_a_backwards_clock_cannot_evict_the_original(self):
+        # A freshly taken backup is protected from its own prune, so a timestamp
+        # that sorts before everything else must not be mistaken for the pinned
+        # original and evict it.
+        self.apply_over_seconds(core.MAX_BACKUPS + 2)
+        original = self.backup_ids()[0]
+        skewed = self.home / "model-ui-backups" / "20200101T000000Z-ffffffff"
+        skewed.mkdir()
+        removed = self.store.prune_backups(protected={skewed.name})
+        self.assertIn(original, self.backup_ids())
+        self.assertNotIn(skewed.name, removed)
+
+    def test_a_backwards_clock_cannot_evict_the_copy_a_restore_must_keep(self):
+        # A restore first saves the configuration it is about to replace, so a way
+        # back always exists. If the clock moved backwards, that safety copy sorts
+        # older than the backups already present and would be pruned in the same
+        # breath, destroying the only copy of the state it just replaced. Only a
+        # skewed clock makes this observable: on a steady clock the safety copy is
+        # the newest backup and survives on that alone.
+        self.apply_over_seconds(core.MAX_BACKUPS + 3)
+        target = self.backup_ids()[1]
+        # One second after the oldest backup, and so outside the newest MAX_BACKUPS.
+        state = {"now": self.BASE + timedelta(seconds=1)}
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                value = state["now"]
+                return value if tz else value.replace(tzinfo=None)
+
+        with mock.patch.object(core, "datetime", Clock):
+            restored = self.store.restore({"confirmed": True, "backup_id": target})
+        self.assertTrue(restored["ok"])
+        self.assertIn(restored["safety_backup"], self.backup_ids(),
+                      "the copy taken before a restore must survive its own prune")
 
 
 if __name__ == "__main__":

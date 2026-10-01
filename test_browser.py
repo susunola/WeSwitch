@@ -639,6 +639,21 @@ def main():
                 browser("check", "#confirmation")
                 check("!document.getElementById('apply-button').disabled", "Original re-preview and confirmation enable apply")
                 audit_english("English fresh preview before apply")
+
+                # Retention: seed older backups so this apply has to prune. They
+                # carry a manifest but no config.toml, so the assertions that count
+                # real backups with glob("*/config.toml") are unaffected. This is the
+                # first apply, so the store has not created the backup root yet.
+                (home / "model-ui-backups").mkdir(parents=True, exist_ok=True)
+                seeded = []
+                for index in range(1, 8):
+                    name = f"20200101T0000{index:02d}Z-{index:08x}"
+                    (home / "model-ui-backups" / name).mkdir()
+                    (home / "model-ui-backups" / name / "manifest.json").write_text(json.dumps(
+                        {"created": f"2020-01-01T00:00:{index:02d}+00:00",
+                         "applied": True, "before_sha256": "0" * 64}))
+                    seeded.append(name)
+
                 click("apply-button")
                 wait_for("!document.getElementById('success-panel').hidden && !document.getElementById('refresh-button').disabled")
                 applied = latest_response("/api/apply", "en", 200, "Original isolated apply")
@@ -665,6 +680,36 @@ def main():
                 check("document.getElementById('api_key').value==='' && document.getElementById('api_key').type==='password'", "Secrets are cleared after apply")
                 storage_check("After apply", server.token)
                 audit_english("English success and saved provider")
+
+                # Retention: 7 seeded + 1 real = 8, so the newest five plus the
+                # oldest survive and the two in between are cleared and reported.
+                # The apply refreshes the state, which rewrites this same status
+                # line, so the count has to survive the refresh to be asserted here.
+                expected_status = ("Configuration saved and status refreshed. Model generation is "
+                                   "untested. Follow the instructions below to restart Codex "
+                                   "manually. 2 older backup(s) were cleared under the retention rule.")
+                wait_for("document.getElementById('status-message').textContent==="
+                         + json.dumps(expected_status))
+                status = value("document.getElementById('status-message').textContent")
+                expect(status == expected_status,
+                       "A pruning apply reports exactly how many older backups it cleared",
+                       {"status": status, "pruned_backups": applied.get("pruned_backups")})
+                left = sorted(p.name for p in (home / "model-ui-backups").iterdir()
+                              if p.is_dir() and not p.is_symlink())
+                expect(len(left) == 6 and seeded[0] in left and seeded[1] not in left
+                       and seeded[2] not in left,
+                       "The oldest backup survives pruning and the set settles at six", left)
+                check("document.getElementById('backup-count').textContent.trim()==='6'",
+                      "The backup count reflects the pruned set")
+                texts({"backup-policy": "Only the most recent 5 backups are kept, plus the oldest one, "
+                                        "which is never removed. Anything beyond that is cleared after "
+                                        "an apply or a restore."},
+                      "English retention policy is stated from the server constants")
+                toggle("zh-CN", upstream, store, "Chinese retention policy")
+                texts({"backup-policy": "只保留最近 5 个备份，最早那份始终保留；超出部分会在应用或还原后清理。"},
+                      "Chinese retention policy")
+                toggle("en", upstream, store, "Return the retention policy to English")
+                audit_english("English retention policy restored")
                 toggle("zh-CN", upstream, store, "Switch completed result to Chinese")
                 toggle("en", upstream, store, "Return completed result to English")
                 audit_english("English restored completed result")

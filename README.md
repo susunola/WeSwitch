@@ -17,7 +17,7 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 - **一次添加多个模型**：同一个提供方的地址与密钥只填一次，多个模型 ID（如 Pro、Flash）一起保存，各自成为可切换的 profile，不需要为每种模型重复新建提供方。
 - **可选写入模型目录**：桌面端模型选择器只渲染 `model_catalog_json` 指向的目录条目。勾选后把你的模型合并进新目录文件，原目录先逐字节备份；不勾选则完全不碰目录文件。
 - **可选连接与协议检查**：确认后向该地址发送**一次最短请求**（最多 16 个输出 token），判断它是否接受 Codex 唯一的 Responses 协议；可能产生少量费用，只报告结果，不保存密钥或配置。
-- **每次应用都可回滚**：每次应用都会生成校验过的备份；界面里可选择任一已应用的备份还原，还原前会把当前配置再存一份新备份，因此还原本身也可撤销。
+- **每次应用都可回滚**：每次应用都会生成校验过的备份；界面里可选择任一已应用的备份还原，还原前会把当前配置再存一份新备份，因此还原本身也可撤销。备份目录保留最近 5 份与最早 1 份，超出的在应用或还原后自动清理。
 - **先看清 Codex 现状，再动手**：套餐、账号、套餐有效期与登录令牌状态**离线**读自本机登录信息；已有模型列表读自本机目录。已加过的模型会被标记并**默认不勾选**，避免同一个模型加两次。
 
 ## 开始使用
@@ -26,10 +26,10 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 
 初始二进制发布目标为 **macOS Apple Silicon（arm64）**；CI 构建使用 macOS 14，本地构建已在 macOS 27 验证。其他系统版本尚需实际验证。独立应用内置 Python，不需要安装 Python、Homebrew 或 WorkBuddy。
 
-发布后，下载 `WeSwitch-v0.4.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
+发布后，下载 `WeSwitch-v0.5.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.4.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.5.0-macos-arm64.zip.sha256
 ```
 
 解压后打开 `WeSwitch.app`，默认浏览器会显示本地界面。校验和用于检查文件完整性，不等于发行者身份认证。
@@ -83,6 +83,8 @@ Codex 只有一种线协议：**Responses API**。旧版 `wire_api = "chat"` 已
 
 **回滚**：`~/.codex/model-ui-backups/` 下每个已应用的备份都可在界面里选择还原；还原前当前配置会另存为新备份。还原只覆盖本工具写过的文件（配置，以及应用时写过的目录文件），不删除任何钥匙串条目。
 
+**备份保留**：目录最多保留最近 **5** 个备份，外加**最早那一份** —— 即本工具首次改动配置之前的那份。最早那份始终保留，好让连续多次应用之后仍然回得去。因此上限为 6 份，超出的会在**应用或还原成功之后**于写锁内清理，界面会报出本次清理了几个。仅打开界面、切换语言、预览、读取状态都不会删除任何备份；清理只发生在真正写入配置时。清理失败的备份会原地保留，并且不会让这次应用失败。
+
 ## 使用边界
 
 1. 填写提供方地址与模型 ID。`https://api.example.com/v1` 和 `model-id` **仅是示例**，不是推荐服务或可用模型声明。
@@ -98,6 +100,7 @@ Codex 只有一种线协议：**Responses API**。旧版 `wire_api = "chat"` 已
 | --- | --- |
 | Codex 配置 | `~/.codex/config.toml`；支持 `CODEX_HOME`，须与 Codex 实际使用的目录一致 |
 | 配置备份 | `~/.codex/model-ui-backups/`；使用 `CODEX_HOME` 时位于该目录下，保留旧目录名以兼容既有备份 |
+| 备份保留 | 最近 5 份 + 最早 1 份，上限 6 份；应用或还原成功后清理，仅打开界面不删除任何备份 |
 | 托管凭据 | macOS Keychain，service 为 `local.codex-model-ui`；保留旧名称以兼容已有条目 |
 | 源码专属环境 | `~/Library/Application Support/WeSwitch/venv/` |
 | 运行状态 | `~/Library/Application Support/WeSwitch/runtime.json`；含会话 token，不可分享 |
@@ -126,9 +129,9 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 在本机 macOS 上构建当前架构的应用：
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.4.0
+.venv/bin/python scripts/build_macos.py --version v0.5.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.4.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.5.0 --output "$HOME/WeSwitch release"
 ```
 
 构建脚本不安装依赖。入口为 `launch_desktop.py`；打包 `index.html`、`i18n.js` 以及存在时的 `assets/WeSwitch.icns`。工作文件与 spec 留在 `build/`，默认输出在 `dist/`；已有应用或同版本压缩包不会被覆盖，重复构建请指定新的输出目录。脚本校验 Python 与应用可执行文件架构，再用 `ditto` 保留 bundle 元数据生成 zip 和 SHA-256 文件。初始 GitHub Release 工作流只发布 arm64 应用。
@@ -136,7 +139,7 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 Release 工作流接受 `v*` 标签推送，或从默认分支手动指定**已存在**的稳定版本标签；PR 不发布，只有发布 job 拥有 `contents: write` 权限，不使用长期密钥。请先完成代码审查和测试，再创建、推送版本标签。手动重试命令：
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.4.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.5.0
 ```
 
 ## 许可证

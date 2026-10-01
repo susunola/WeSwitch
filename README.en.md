@@ -18,6 +18,7 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 - **Optional model catalog write:** the desktop picker renders only the entries of `model_catalog_json`. When enabled, your models are merged into a new catalog file and the existing one is backed up first; when disabled, no catalog file is touched.
 - **Optional connection and protocol check:** after consent, **one minimal request** (at most 16 output tokens) is sent to confirm the endpoint accepts Codex's only wire protocol. It may cost a small amount of quota; it reports the result and saves no key or configuration.
 - **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible.
+- **See what Codex already has first:** plan, account, subscription expiry, and login-token status are read **offline** from local sign-in data, and the installed model list from the local catalog. Models you already have are marked and **left unchecked by default**, so the same model cannot be added twice by accident.
 
 ## Get started
 
@@ -25,10 +26,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.3.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.4.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.3.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.4.0-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -57,6 +58,18 @@ One gateway and one credential need only one provider entry: enter **one model I
 - The default model is written to the root `model` / `model_provider`; the others are written only as `model`, `model_provider`, and `model_reasoning_effort`, leaving unrelated profile settings untouched.
 - Names are derived from the provider ID and model ID, for example `deepseek-deepseek-chat`. An existing profile of the same name that holds settings this tool does not write is rejected instead of overwritten.
 - Switching depends on the profile support of your Codex build (for example the `profile` setting or `--profile`). **This tool does not guarantee that these models appear in the desktop model picker.** Check your Codex version and enter a model ID manually if needed.
+
+## See what Codex already has: plan, installed models, and usage
+
+The **Codex status** panel has two halves and is **read-only and offline by default**:
+
+**Plan and installed models (offline).** The plan type, account, subscription expiry, and login-token status are parsed from the local sign-in data in `~/.codex/auth.json`; the installed model list comes from the local catalog (`models_cache.json`, or the `model_catalog_json` you configured). Neither makes a network request — the page shows them as soon as it loads. This tool only reads this data; it never modifies the sign-in data and **never returns the token to the page**.
+
+**Avoiding duplicate additions.** In the model picker, models you already have are marked "already added" (written by this tool) or "in the catalog" (already present in the catalog), and are **unchecked by default**. Adding one twice takes a deliberate click, so an accidental duplicate cannot happen in passing.
+
+**Usage (one query, only when you click).** Usage is never requested on page load. Only after you click Query usage and accept the confirmation does the tool use the locally stored ChatGPT login token to send **one read-only request** to `chatgpt.com`. This is stated next to the button and again in the confirmation dialog: **the token is sent to chatgpt.com**. The query writes no file, uploads no configuration, and saves no token; cancelling sends nothing at all. The button is unavailable when the login is not a ChatGPT session (for example an API key only).
+
+Results are grouped by window (5-hour and 7-day), showing the used percentage and reset time, with an expandable breakdown by dimension (model, trigger, conversation source, surface). The figures come from the server and are **indicative only**: the window rolls, coverage may be incomplete, and rounding and counting conventions follow what Codex itself displays.
 
 ## One wire protocol
 
@@ -89,8 +102,11 @@ The connection test sends that request and inspects the reply: a `response` obje
 | Source environment | `~/Library/Application Support/WeSwitch/venv/` |
 | Runtime state | `~/Library/Application Support/WeSwitch/runtime.json`; contains a session token and must not be shared |
 | Browser server | Binds only to `127.0.0.1`; APIs require a session token and enforce Host / Origin checks |
+| ChatGPT sign-in data | `~/.codex/auth.json`; parsed read-only for plan and token status, and the token is never returned to the page |
 
 Keychain writes use native security APIs. Reads use the `/usr/bin/security` helper with service/account identifiers, not secret values, in its arguments. Configuration references the helper rather than embedding the key. Existing configuration and byte-exact backups may still contain pre-existing secrets: protect them accordingly.
+
+WeSwitch makes only two kinds of outbound request, each confirmed by you individually: the model list request (`GET <base>/models`, sent to **the provider you entered**) and the usage query (sent to **chatgpt.com** with the local ChatGPT login token). The usage query is the only operation that sends that token to an external address, and it happens once, only after you click and accept the confirmation dialog. When it fails, the error body is not read, so the token cannot leak through a log or the UI.
 
 Do not forward the port or publish the local server as a remote site. Never commit real configuration, keys, runtime state, backups, personal screenshots, or unredacted logs. `.gitignore` is only a safeguard: review an explicit publish whitelist and inspect its contents. The legacy launcher is excluded from public distribution. Before restoring a backup, stop Codex and WeSwitch, inspect the backup, and preserve the current file. Existing Keychain entries are not automatically deleted.
 
@@ -110,9 +126,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.3.0
+.venv/bin/python scripts/build_macos.py --version v0.4.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.3.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.4.0 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -120,7 +136,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.3.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.4.0
 ```
 
 ## License

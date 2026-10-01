@@ -12,7 +12,8 @@ import backend_i18n as i18n
 
 
 ROOT = Path(__file__).resolve().parent
-SOURCE_FILES = ("config_core.py", "model_discovery.py", "connection_test.py", "keychain.py", "server.py")
+SOURCE_FILES = ("config_core.py", "model_discovery.py", "connection_test.py", "keychain.py",
+                "server.py", "account_info.py")
 CJK = re.compile(r"[\u3400-\u9fff]")
 KNOWN = "不支持的认证方式。"
 ENGLISH = "Unsupported authentication method."
@@ -159,6 +160,12 @@ DYNAMIC_CASES = {
     "本地配置界面已启动：{}；仅监听 127.0.0.1。": (
         ("本地配置界面已启动：http://127.0.0.1:18765；仅监听 127.0.0.1。",
          "The local configuration UI has started: http://127.0.0.1:18765; listening only on 127.0.0.1."),
+    ),
+    "用量接口返回 HTTP {}。为避免泄露令牌，未读取错误正文；请稍后重试。": (
+        ("用量接口返回 HTTP 503。为避免泄露令牌，未读取错误正文；请稍后重试。",
+         "The usage endpoint returned HTTP 503. The error body was not read, to avoid leaking the token. Retry later."),
+        ("用量接口返回 HTTP 500。为避免泄露令牌，未读取错误正文；请稍后重试。",
+         "The usage endpoint returned HTTP 500. The error body was not read, to avoid leaking the token. Retry later."),
     ),
 }
 

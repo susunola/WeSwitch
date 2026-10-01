@@ -297,6 +297,40 @@ _EXACT_TRANSLATIONS = {
     "此环境无法使用 macOS 钥匙串。":
         "macOS Keychain is unavailable in this environment.",
 
+    # account_info.py: local sign-in facts and the on-demand usage query. These
+    # strings reach the browser only through error/message fields or the consent
+    # prompt; no plan, window or model identifier is ever localized.
+    "将读取 ~/.codex/auth.json 里的 ChatGPT 访问令牌，并用它向 chatgpt.com 查询用量。这是一次只读请求：不修改配置，不上传你的配置文件，也不保存令牌。是否继续？":
+        "The ChatGPT access token in ~/.codex/auth.json will be read and used to query usage from chatgpt.com. This is a read-only request: no configuration is changed, your configuration file is not uploaded, and no token is saved. Continue?",
+    "没有找到 ~/.codex/auth.json：请先用 ChatGPT 账号登录 Codex，再查询用量。":
+        "~/.codex/auth.json was not found. Sign in to Codex with your ChatGPT account first, then query usage.",
+    "本机保存的 ChatGPT 登录令牌已过期。请在 Codex 里发一条消息让它自动刷新，然后重试。":
+        "The ChatGPT token saved on this Mac has expired. Send a message in Codex so it refreshes automatically, then retry.",
+    "当前 Codex 使用 API Key 登录，没有 ChatGPT 套餐用量可查。":
+        "Codex is signed in with an API key, so there is no ChatGPT plan usage to query.",
+    "无法读取本机登录信息，因此无法查询用量。":
+        "The local sign-in information could not be read, so usage cannot be queried.",
+    "查询用量超时。请检查网络后重试；未发送任何配置内容。":
+        "The usage query timed out. Check the network and retry; no configuration content was sent.",
+    "无法连接 chatgpt.com 查询用量。请检查网络、代理或 TLS 证书；本工具不会跳过证书校验。":
+        "Unable to reach chatgpt.com to query usage. Check the network, proxy, or TLS certificate; this tool never skips certificate verification.",
+    "用量接口发生了跳转。为避免令牌泄露，未跟随跳转。":
+        "The usage endpoint redirected. The redirect was not followed, to avoid leaking the token.",
+    "用量接口拒绝了这次请求：登录已过期或未授权。请在 Codex 里重新登录后重试。":
+        "The usage endpoint rejected this request: the sign-in has expired or is not authorized. Sign in again in Codex, then retry.",
+    "用量接口限流，请稍后重试。":
+        "The usage endpoint is rate limiting requests. Retry later.",
+    "用量接口返回了成功状态，但响应不是有效 JSON，无法解析。":
+        "The usage endpoint returned a success status, but the response is not valid JSON and cannot be parsed.",
+    "用量响应使用了不支持的压缩方式，无法解析。":
+        "The usage response used an unsupported content encoding and cannot be parsed.",
+    "用量响应过大，已停止读取，未显示任何数据。":
+        "The usage response was too large, so reading stopped and no data is shown.",
+    "这个账号暂时没有可用的用量数据（接口返回 404）。":
+        "This account has no usage data available yet (the endpoint returned 404).",
+    "用量数据来自 chatgpt.com 的官方接口；仅供参考，以 Codex 界面显示为准。":
+        "The usage data comes from the official chatgpt.com endpoint. It is for reference only; what the Codex UI shows is authoritative.",
+
     # server.py: API authorization, request validation, and safe errors.
     "拒绝不匹配的本机请求地址。":
         "The request was rejected because the local host address does not match.",
@@ -324,6 +358,8 @@ _EXACT_TRANSLATIONS = {
         "A model list request is already being processed; wait for it to finish before trying again.",
     "已有连接测试正在进行，请等待完成后重试。":
         "A connection test is already running; wait for it to finish before trying again.",
+    "已有用量查询正在进行，请等待完成后重试。":
+        "A usage query is already running; wait for it to finish before trying again.",
     "操作未能完成。请检查本机权限和备份目录；不要重复提交。详细异常已隐藏以保护凭据。":
         "The operation could not be completed. Check local permissions and the backup directory; do not submit repeatedly. Exception details have been hidden to protect credentials.",
     "此工具不允许跨域访问。":
@@ -391,6 +427,8 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
      "The provider's model list endpoint returned HTTP {code}; the error body was not read. Retry later or enter the model manually."),
     (r"\A服务端返回 HTTP (?P<status>[0-9]{3})；未读取错误正文，请稍后重试。\Z",
      "The service returned HTTP {status}; the error body was not read. Retry later."),
+    (r"\A用量接口返回 HTTP (?P<status>[0-9]{3})。为避免泄露令牌，未读取错误正文；请稍后重试。\Z",
+     "The usage endpoint returned HTTP {status}. The error body was not read, to avoid leaking the token. Retry later."),
     (r"\A无法检查钥匙串（系统状态 (?P<status>-?[0-9]+)）。请先解锁登录钥匙串。\Z",
      "Unable to check Keychain (system status {status}). Unlock the login Keychain first."),
     (r"\A钥匙串保存未成功（系统状态 (?P<status>-?[0-9]+)）。未写入 Codex 配置。\Z",

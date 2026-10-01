@@ -18,6 +18,7 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 - **可选写入模型目录**：桌面端模型选择器只渲染 `model_catalog_json` 指向的目录条目。勾选后把你的模型合并进新目录文件，原目录先逐字节备份；不勾选则完全不碰目录文件。
 - **可选连接与协议检查**：确认后向该地址发送**一次最短请求**（最多 16 个输出 token），判断它是否接受 Codex 唯一的 Responses 协议；可能产生少量费用，只报告结果，不保存密钥或配置。
 - **每次应用都可回滚**：每次应用都会生成校验过的备份；界面里可选择任一已应用的备份还原，还原前会把当前配置再存一份新备份，因此还原本身也可撤销。
+- **先看清 Codex 现状，再动手**：套餐、账号、套餐有效期与登录令牌状态**离线**读自本机登录信息；已有模型列表读自本机目录。已加过的模型会被标记并**默认不勾选**，避免同一个模型加两次。
 
 ## 开始使用
 
@@ -25,10 +26,10 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 
 初始二进制发布目标为 **macOS Apple Silicon（arm64）**；CI 构建使用 macOS 14，本地构建已在 macOS 27 验证。其他系统版本尚需实际验证。独立应用内置 Python，不需要安装 Python、Homebrew 或 WorkBuddy。
 
-发布后，下载 `WeSwitch-v0.3.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
+发布后，下载 `WeSwitch-v0.4.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.3.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.4.0-macos-arm64.zip.sha256
 ```
 
 解压后打开 `WeSwitch.app`，默认浏览器会显示本地界面。校验和用于检查文件完整性，不等于发行者身份认证。
@@ -57,6 +58,18 @@ bash "Start WeSwitch.command"
 - 默认模型写入根级 `model` / `model_provider`；其余只写入 `model`、`model_provider`、`model_reasoning_effort`，不动其他 profile 设置。
 - 名称由「提供方 ID + 模型 ID」生成，例如 `deepseek-deepseek-chat`。已存在且含本工具不写入之设置的同名 profile 会被拒绝，避免覆盖你的配置。
 - 切换方式取决于 Codex 自身支持的 profile 能力（如配置 `profile`、命令行 `--profile`）。**本工具不保证桌面端模型下拉列表一定显示这些模型**；请以实际 Codex 版本为准，必要时手动输入模型 ID。
+
+## 先看清 Codex 现状：套餐、已有模型与用量
+
+右侧「Codex 现状」面板分两部分，**默认只读、默认不联网**：
+
+**套餐与已有模型（离线）。** 套餐类型、账号、套餐有效期与登录令牌状态，从本机 `~/.codex/auth.json` 的登录信息中解析；已有模型列表从本机模型目录（`models_cache.json`，或你配置的 `model_catalog_json`）读取。这两项都不发网络请求 —— 打开页面就能看到。本工具只读取，不修改登录信息，也**不会把令牌返回给页面**。
+
+**避免重复添加。** 模型选择器里，已经存在的模型会标注为「已加过」（本工具写入的）或「已在目录中」（目录里本来就有），并**默认不选中**。想重复添加必须自己手动勾选 —— 误加不会顺手发生。
+
+**用量（点击才查询一次）。** 用量不随页面加载请求。只有你点「查询用量」并在确认框中同意后，才会用本机保存的 ChatGPT 登录令牌，向 `chatgpt.com` 发送**一次只读请求**。这一点会写在按钮旁，也会写在确认框里：**令牌会发给 chatgpt.com**。查询不修改任何文件、不上传配置、不保存令牌；取消则完全不发请求。非 ChatGPT 登录（例如只填了 API Key）时该按钮不可用。
+
+查询结果按窗口分组（5 小时 / 7 天），显示已用百分比与重置时间，并可展开按维度（模型、触发方式、会话来源、界面）的细分。用量数值来自服务端，**仅为参考**：窗口是滚动窗口，数据可能不完整，四舍五入与统计口径以 Codex 自身显示为准。
 
 ## 接口协议：只有一个
 
@@ -89,8 +102,11 @@ Codex 只有一种线协议：**Responses API**。旧版 `wire_api = "chat"` 已
 | 源码专属环境 | `~/Library/Application Support/WeSwitch/venv/` |
 | 运行状态 | `~/Library/Application Support/WeSwitch/runtime.json`；含会话 token，不可分享 |
 | 浏览器服务 | 仅监听 `127.0.0.1`，API 需要会话 token，并校验 Host / Origin |
+| ChatGPT 登录信息 | `~/.codex/auth.json`；只读解析套餐与令牌状态，令牌不回传页面 |
 
 钥匙串写入通过系统安全接口完成；读取由 `/usr/bin/security` helper 按 service/account 查询，命令行只包含条目标识，不包含密钥值。配置仅引用 helper。已有配置与逐字节备份仍可能包含原先存在的敏感内容，请按秘密文件保管。
+
+WeSwitch 自身的网络出站只有两处，都由你逐次确认：模型列表请求（`GET <base>/models`，发给**你填写的服务商**）和用量查询（发给 **chatgpt.com**，携带本机 ChatGPT 登录令牌）。用量查询是本工具唯一一个会把该令牌发往外部地址的操作，且只在你点击并在确认框同意后发生一次；查询失败时不会读取错误正文，以免在日志或界面中泄露令牌。
 
 不要将端口转发到公网，不要把本地服务发布成远程站点。不要提交真实配置、Key、运行状态、备份、个人截图或未经脱敏的日志。`.gitignore` 只是辅助，发布前仍需检查文件白名单与内容。旧启动入口不属于公开分发内容。恢复配置前先停止 Codex 与 WeSwitch，核对备份内容，并保留当前文件；工具不会自动删除旧钥匙串条目。
 
@@ -110,9 +126,9 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 在本机 macOS 上构建当前架构的应用：
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.3.0
+.venv/bin/python scripts/build_macos.py --version v0.4.0
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.3.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.4.0 --output "$HOME/WeSwitch release"
 ```
 
 构建脚本不安装依赖。入口为 `launch_desktop.py`；打包 `index.html`、`i18n.js` 以及存在时的 `assets/WeSwitch.icns`。工作文件与 spec 留在 `build/`，默认输出在 `dist/`；已有应用或同版本压缩包不会被覆盖，重复构建请指定新的输出目录。脚本校验 Python 与应用可执行文件架构，再用 `ditto` 保留 bundle 元数据生成 zip 和 SHA-256 文件。初始 GitHub Release 工作流只发布 arm64 应用。
@@ -120,7 +136,7 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 Release 工作流接受 `v*` 标签推送，或从默认分支手动指定**已存在**的稳定版本标签；PR 不发布，只有发布 job 拥有 `contents: write` 权限，不使用长期密钥。请先完成代码审查和测试，再创建、推送版本标签。手动重试命令：
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.3.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.4.0
 ```
 
 ## 许可证

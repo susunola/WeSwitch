@@ -309,7 +309,7 @@ class ConfigStore:
     def state(self):
         with self.lock:
             _, revision, data, _ = self.snapshot()
-            catalog, _ = self.catalog_info(data)
+            catalog, slugs = self.catalog_info(data)
             providers = []
             for key, provider in data.get("model_providers", {}).items():
                 account = managed_account(provider)
@@ -339,11 +339,18 @@ class ConfigStore:
             warnings = ["仅在你确认获取列表时请求服务商 /models；不会发送模型生成请求。获取列表与配置写入是独立操作。"]
             if catalog.get("warning"):
                 warnings.append(catalog["warning"])
+            # Imported here: account_info reuses the connection test's redaction
+            # helper, which imports this module.
+            from account_info import existing_models, read_account
+            managed = {entry["model"] for provider in providers for entry in provider["switchable_models"]}
+            account = read_account(self.home)
+            installed = existing_models(self.home, self.catalog_path(data), slugs, managed)
             return {
                 "config_path": str(self.path), "revision": revision,
                 "current": {"model": data.get("model"), "model_provider": data.get("model_provider", "openai"),
                             "reasoning_effort": data.get("model_reasoning_effort")},
                 "catalog": catalog, "app": self.app_info(), "providers": providers,
+                "account": account, "installed": installed,
                 "protocol": WIRE_API,
                 "backups": backups, "keychain_available": self.keychain.available,
                 "warnings": warnings, "demo": self.demo,

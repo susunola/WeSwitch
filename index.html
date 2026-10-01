@@ -60,6 +60,11 @@
         let rollbackLoading = false;
         let catalogAuto = false;
         let loginAllowed = true;
+        let usageController = null;
+        let usageLoading = false;
+        // Picks in the discovery list survive filtering, but a model the account
+        // already has never starts selected: adding it twice needs a deliberate click.
+        let pickedModels = new Set();
 
         function modelsEndpoint() {
           const url = new URL(fields.base_url.value.trim());
@@ -151,6 +156,316 @@
             : '无认证模式没有可用于登录的凭据，因此不写入登录方式。');
         }
 
+        // ---- What Codex already has, and what the account has left -----------
+        //
+        // Two of the three answers are already on disk: the plan comes from the JWT
+        // claims in auth.json, and the model list from the account-scoped cache the
+        // desktop client keeps. Neither sends a request. Only the quota needs
+        // chatgpt.com, and only after an explicit confirmation, so loading the page
+        // never contacts anything.
+
+        function existingModelIds() {
+          const ids = new Set((state?.installed?.models || []).map((entry) => entry.slug));
+          (state?.providers || []).forEach((provider) => {
+            (provider.switchable_models || []).forEach((entry) => ids.add(entry.model));
+          });
+          return ids;
+        }
+
+        function accountPlanLabel(plan) {
+          if (typeof plan !== 'string' || !plan) return '未读取到套餐';
+          return raw(plan.charAt(0).toUpperCase() + plan.slice(1));
+        }
+
+        function accountNote(note) {
+          if (note === 'auth_missing') return '没有找到 ~/.codex/auth.json：请先用 ChatGPT 账号登录 Codex，再刷新状态。';
+          if (note === 'auth_unreadable') return '无法读取本机登录信息：文件可能损坏，或不是有效的 JSON。';
+          if (note === 'not_chatgpt_login') return '当前 Codex 使用 API Key 登录，没有 ChatGPT 套餐信息可读。';
+          if (note === 'signed_out') return '本机登录信息里没有可用的访问令牌，请先在 Codex 里登录。';
+          if (note === 'token_expired') return '本机保存的登录令牌已过期；请在 Codex 里发一条消息让它自动刷新，再回到这里刷新状态。';
+          return '';
+        }
+
+        // Locale-formatted dates are dynamic values, so they are wrapped rather than
+        // translated. Empty means "unknown"; callers supply their own wording.
+        function formatTime(value) {
+          if (typeof value !== 'string' || !value) return '';
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) return value;
+          return date.toLocaleString();
+        }
+
+        // _percent() already rounds to two decimals, so the plain value is exact.
+        function formatPercent(value) {
+          return value + '%';
+        }
+
+        function formatWindow(minutes) {
+          if (minutes === 300) return '5 小时窗口';
+          if (minutes === 10080) return '7 天窗口';
+          if (typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0) {
+            return message('{minutes} 分钟窗口', { minutes });
+          }
+          return '窗口长度未知';
+        }
+
+        // Each label carries its own colon: a bare separator would survive the
+        // locale switch as a full-width colon in English text.
+        function dimensionLabel(dimension) {
+          if (dimension === 'model') return '按模型：';
+          if (dimension === 'turn_trigger') return '按触发方式：';
+          if (dimension === 'thread_source') return '按会话来源：';
+          if (dimension === 'surface') return '按界面：';
+          return concat('维度：', raw(dimension));
+        }
+
+        function renderAccount() {
+          const account = state?.account;
+          if (!account) {
+            ['account-plan', 'account-email', 'account-subscription', 'account-token']
+              .forEach((id) => text(id, '尚未读取'));
+            $('account-token').dataset.tone = 'neutral';
+            text('account-note', '');
+            $('account-note').hidden = true;
+            return;
+          }
+          text('account-plan', accountPlanLabel(account.plan));
+          text('account-email', stringValue(account.email, '未读取到'));
+          const until = formatTime(account.subscription_until);
+          text('account-subscription', until ? raw(until) : '未读取到');
+          const expires = formatTime(account.access_token_expires_at);
+          text('account-token', account.token_expired ? '已过期，需刷新'
+            : expires ? raw(expires) : '未读取到');
+          $('account-token').dataset.tone = account.token_expired ? 'warning' : 'neutral';
+          const note = accountNote(account.note);
+          text('account-note', note);
+          $('account-note').hidden = !note;
+        }
+
+        function renderInstalled() {
+          const installed = state?.installed;
+          const list = $('installed-list');
+          list.replaceChildren();
+          if (!installed) {
+            text('installed-count', '—');
+            text('installed-source', '尚未读取 Codex 的模型目录。');
+            text('installed-note', '');
+            $('installed-note').hidden = true;
+            return;
+          }
+          text('installed-count', message('{total} 个', { total: installed.total }));
+          if (installed.note === 'catalog_missing') {
+            text('installed-source', '本机没有找到 Codex 的模型目录文件，无法列出已有模型。');
+          } else if (installed.note === 'catalog_empty') {
+            text('installed-source', '模型目录存在，但没有可读的模型条目。');
+          } else if (installed.kind === 'configured_catalog') {
+            text('installed-source', concat('来自当前 model_catalog_json 指向的目录：', raw(installed.source)));
+          } else if (installed.kind === 'app_cache') {
+            text('installed-source', concat('来自 Codex 客户端的账号模型缓存 models_cache.json：', raw(installed.source)));
+          } else if (installed.kind === 'legacy_cache') {
+            text('installed-source', concat('来自旧版缓存 opencodex-catalog.json（版本较旧，仅供参考）：', raw(installed.source)));
+          } else {
+            text('installed-source', '模型来源未知。');
+          }
+          installed.models.forEach((entry) => {
+            const item = document.createElement('li');
+            item.className = 'chip';
+            // "added by this tool" and "already rendered from the catalog" are
+            // different facts, so they get different markers rather than one word.
+            const managed = entry.added && !entry.in_current_catalog;
+            item.dataset.flag = managed ? 'added' : entry.hidden ? 'hidden' : 'plain';
+            const slug = document.createElement('code');
+            slug.textContent = entry.slug;
+            item.append(slug);
+            const marks = [];
+            if (managed) marks.push('已加过');
+            else if (entry.in_current_catalog) marks.push('已在目录中');
+            if (entry.hidden) marks.push('已隐藏');
+            if (entry.upgrade_to) marks.push(concat('→ ', raw(entry.upgrade_to)));
+            if (marks.length) {
+              const marker = document.createElement('span');
+              marker.className = 'chip-marker';
+              // Joined through the translation layer: a plain join would emit the
+              // Chinese labels verbatim and leave them visible in English.
+              const parts = [];
+              marks.forEach((mark, index) => {
+                if (index) parts.push(' · ');
+                parts.push(mark);
+              });
+              i18n.setText(marker, concat(...parts));
+              item.append(marker);
+            }
+            list.append(item);
+          });
+          const notes = [];
+          if (installed.hidden > 0) {
+            notes.push(message('其中 {count} 个被标记为隐藏（visibility 不是 list），不会出现在选择器里。',
+              { count: installed.hidden }));
+          }
+          const upgrades = installed.models.filter((entry) => entry.upgrade_to).length;
+          if (upgrades > 0) {
+            notes.push(message('其中 {count} 个有更新的替代模型（见 → 标记）。', { count: upgrades }));
+          }
+          if (installed.client_version) {
+            notes.push(message('目录由客户端版本 {version} 写入。', { version: installed.client_version }));
+          }
+          if (notes.length) {
+            text('installed-note', concat(...notes));
+            $('installed-note').hidden = false;
+          } else {
+            text('installed-note', '');
+            $('installed-note').hidden = true;
+          }
+        }
+
+        function setUsageStatus(value, tone = 'neutral') {
+          text('usage-status', value);
+          $('usage-status').dataset.tone = tone;
+        }
+
+        function resetUsage() {
+          const wasLoading = usageLoading;
+          if (usageController) usageController.abort();
+          usageController = null;
+          usageLoading = false;
+          $('usage-meter').hidden = true;
+          $('usage-meter').replaceChildren();
+          setUsageStatus(wasLoading
+            ? '已停止等待上一次用量查询。已发出的请求无法撤回，旧结果会被忽略。'
+            : '尚未查询用量。套餐与模型列表不需要联网。');
+          updateControls();
+        }
+
+        function renderUsage(data) {
+          const meter = $('usage-meter');
+          meter.replaceChildren();
+          const periods = data.periods.filter((period) => typeof period.used_percent === 'number');
+          if (!periods.length) {
+            meter.hidden = true;
+            return;
+          }
+          // 5-hour first, then 7-day; any window this build does not know keeps the
+          // order the service sent rather than being dropped or relabelled.
+          const order = (minutes) => minutes === 300 ? 0 : minutes === 10080 ? 1 : 2;
+          [...periods].sort((a, b) => order(a.window_minutes) - order(b.window_minutes)).forEach((period) => {
+            const row = document.createElement('div');
+            row.className = 'usage-row';
+            const top = document.createElement('div');
+            top.className = 'usage-top';
+            const name = document.createElement('span');
+            i18n.setText(name, formatWindow(period.window_minutes));
+            const amount = document.createElement('span');
+            i18n.setText(amount, raw(formatPercent(period.used_percent)));
+            top.append(name, amount);
+            const bar = document.createElement('div');
+            bar.className = 'usage-bar';
+            bar.dataset.tone = period.used_percent >= 100 ? 'blocked'
+              : period.used_percent >= 90 ? 'warning' : 'neutral';
+            const fill = document.createElement('span');
+            // The bar is capped at 100% so an over-quota window stays readable.
+            fill.style.width = Math.max(2, Math.min(100, period.used_percent)) + '%';
+            bar.append(fill);
+            row.append(top, bar);
+            const meta = document.createElement('p');
+            meta.className = 'usage-meta';
+            i18n.setText(meta, concat(
+              period.starts_at ? raw(formatTime(period.starts_at)) : '开始时间未知',
+              ' — ',
+              period.ends_at ? raw(formatTime(period.ends_at)) : '结束时间未知',
+              period.accounting_complete ? '' : ' · 该窗口统计尚未完成'));
+            row.append(meta);
+            if (period.breakdowns.length) {
+              const details = document.createElement('details');
+              details.className = 'usage-details';
+              const summary = document.createElement('summary');
+              i18n.setText(summary, '按维度拆解');
+              details.append(summary);
+              const groups = document.createElement('ul');
+              period.breakdowns.forEach((group) => {
+                const item = document.createElement('li');
+                i18n.setText(item, concat(dimensionLabel(group.dimension),
+                  raw(group.rows.map((entry) => entry.key + ' ' + formatPercent(entry.percent)).join(' · '))));
+                groups.append(item);
+              });
+              details.append(groups);
+              row.append(details);
+            }
+            meter.append(row);
+          });
+          const coverage = [];
+          if (data.data_as_of) coverage.push(concat('数据截至：', raw(formatTime(data.data_as_of))));
+          if (data.coverage_start) coverage.push(concat('统计自：', raw(formatTime(data.coverage_start))));
+          if (coverage.length) {
+            const meta = document.createElement('p');
+            meta.className = 'usage-meta';
+            i18n.setText(meta, concat(coverage[0], coverage.length > 1 ? ' · ' : '', coverage[1] || ''));
+            meter.append(meta);
+          }
+          meter.hidden = false;
+        }
+
+        async function usage() {
+          if (!sessionAllowed || !stateReady || stateLoading || previewLoading || applying ||
+              modelsLoading || connectionLoading || usageLoading) return;
+          if (!state?.account?.usage_supported) {
+            setUsageStatus(accountNote(state?.account?.note) || '当前没有可查询的 ChatGPT 用量。', 'warning');
+            return;
+          }
+          const consent = message('用量只查询一次：将读取本机保存的 ChatGPT 登录令牌，并用它向 chatgpt.com 发送一次只读请求。不修改配置、不上传配置文件、不保存令牌。是否继续？');
+          if (!window.confirm(t(consent))) {
+            setUsageStatus('已取消，未发送用量查询请求。套餐与模型列表仍来自本机文件。');
+            return;
+          }
+          const controller = new AbortController();
+          usageController = controller;
+          usageLoading = true;
+          setUsageStatus('正在向 chatgpt.com 查询用量…这是一次只读请求，不会修改配置。', 'warning');
+          updateControls();
+          try {
+            const data = await api('/api/usage', { body: { confirmed: true }, signal: controller.signal, timeout: 75000 });
+            if (controller !== usageController || controller.signal.aborted) return;
+            if (data.ok !== true || typeof data.endpoint !== 'string' || typeof data.message !== 'string' ||
+                !Number.isInteger(data.http_status) || !Number.isInteger(data.latency_ms) ||
+                !Array.isArray(data.periods) || typeof data.coverage_complete !== 'boolean' ||
+                typeof data.approximate !== 'boolean') {
+              throw errorFor('服务返回的用量结果格式不完整。', 'INVALID_USAGE');
+            }
+            renderUsage(data);
+            // Exactly one disclaimer, chosen outright: the service never localizes
+            // fields other than its message, so no wording is assembled from parts.
+            let caveat = '';
+            if (data.approximate && !data.coverage_complete) caveat = '（数据为估算值，统计窗口尚未完整覆盖）';
+            else if (data.approximate) caveat = '（数据为估算值）';
+            else if (!data.coverage_complete) caveat = '（统计窗口尚未完整覆盖）';
+            const verdict = message('已查询 · HTTP {status} · {latency} ms',
+              { status: data.http_status, latency: data.latency_ms });
+            const shown = data.periods.filter((period) => typeof period.used_percent === 'number').length;
+            setUsageStatus(concat(verdict, caveat, ' ',
+              i18n.server(data.message, responseLanguages.get(data)),
+              shown ? '' : ' 接口没有返回可用的用量窗口。',
+              ' 这是一次只读请求的结果，配置未改变，令牌未保存。'), caveat ? 'warning' : 'green');
+          } catch (error) {
+            if (controller !== usageController || controller.signal.aborted) return;
+            const reason = error.code === 'INVALID_USAGE' ? '服务返回的用量结果格式不正确。'
+              : error.code === 'REQUEST_TIMEOUT' ? '用量查询等待超时，请稍后重试。'
+              : error.code === 'NETWORK_ERROR' ? '无法连接本地配置服务。'
+              : '未能查询用量，请检查本地服务状态后重试。';
+            const useServerDetail = /^usage_/.test(error.code || '') && error.responseLanguage;
+            let detail = useServerDetail ? error.serverSource : reason;
+            for (const secret of [token]) {
+              if (secret) detail = detail.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]');
+            }
+            setUsageStatus(concat(useServerDetail ? i18n.server(detail, error.responseLanguage) : detail,
+              ' 未修改任何配置，也未保存令牌。'), 'warning');
+          } finally {
+            if (controller === usageController) {
+              usageLoading = false;
+              usageController = null;
+              updateControls();
+            }
+          }
+        }
+
         // One model ID per line; duplicates are collapsed without reordering.
         function parseModelIds(value = fields.model.value) {
           return [...new Set(String(value).split('\n').map((line) => line.trim()).filter(Boolean))];
@@ -181,20 +496,29 @@
 
         function renderModelOptions() {
           const select = $('model-select');
-          const selected = [...select.selectedOptions].map((option) => option.value);
           const query = $('model-search').value.trim().toLowerCase();
           const matches = models.filter((id) => id.toLowerCase().includes(query));
+          // A model the account already has, or one already typed into the field,
+          // is marked and starts unselected so it cannot be added twice by accident.
+          const known = existingModelIds();
+          const typed = parseModelIds();
+          const duplicates = new Set(matches.filter((id) => known.has(id) || typed.includes(id)));
           select.replaceChildren();
           matches.forEach((id) => {
             const option = document.createElement('option');
             option.value = id;
-            option.textContent = id;
+            i18n.setText(option, duplicates.has(id) ? concat(raw(id), '（已加过）') : raw(id));
+            if (duplicates.has(id)) option.dataset.duplicate = 'true';
+            option.selected = pickedModels.has(id);
             select.append(option);
-            if (selected.includes(id)) option.selected = true;
           });
           select.disabled = matches.length === 0;
           $('add-selected-models').disabled = ![...select.selectedOptions].length;
-          text('models-filter-status', message('显示 {shown} / {total} 个模型 ID', { shown: matches.length, total: models.length }));
+          text('models-filter-status', concat(
+            message('显示 {shown} / {total} 个模型 ID', { shown: matches.length, total: models.length }),
+            duplicates.size
+              ? message('，其中 {count} 个已加过（默认不勾选，仍可手动选择）。', { count: duplicates.size })
+              : ''));
         }
 
         function addSelectedModels() {
@@ -202,11 +526,17 @@
           if (!picked.length) return;
           const current = parseModelIds();
           const merged = [...new Set([...current, ...picked])];
+          const repeated = picked.filter((id) => current.includes(id)).length;
           fields.model.value = merged.join('\n');
+          pickedModels.clear();
           syncDefaultModelOptions();
+          renderModelOptions();
           invalidatePlan();
-          setModelsStatus(message('已加入 {count} 个模型 ID，共 {total} 个；可选择默认模型后预览。',
-            { count: picked.length, total: merged.length }), 'green');
+          setModelsStatus(concat(
+            message('已加入 {count} 个模型 ID，共 {total} 个；可选择默认模型后预览。',
+              { count: picked.length, total: merged.length }),
+            repeated ? message(' 其中 {count} 个此前已在本机列表中，没有重复写入。', { count: repeated }) : ''),
+            'green');
         }
 
         function resetModels() {
@@ -217,6 +547,7 @@
           models = [];
           $('models-panel').hidden = true;
           $('model-search').value = '';
+          pickedModels.clear();
           renderModelOptions();
           fillList($('models-warnings'), []);
           $('models-warnings').hidden = true;
@@ -682,6 +1013,12 @@
           $('rollback-button').disabled = !editable || applying || rollbackLoading || !$('backup-select').value;
           $('rollback-button').setAttribute('aria-busy', String(rollbackLoading));
           text('rollback-label', rollbackLoading ? '正在还原…' : '还原所选备份');
+          // The usage button stays disabled unless the local login can actually be
+          // used: an API-key login has no ChatGPT quota to read.
+          $('usage-button').disabled = !editable || usageLoading || !state?.account?.usage_supported;
+          $('usage-button').setAttribute('aria-busy', String(usageLoading));
+          text('usage-label', usageLoading ? '正在查询…' : '查询用量');
+          $('account-card').setAttribute('aria-busy', String(stateLoading));
         }
 
         function invalidatePlan(message = '表单已更改。请重新预览，并再次确认。') {
@@ -929,6 +1266,8 @@
           $('state-warnings').hidden = state.warnings.length === 0;
           fillList($('state-warning-list'), state.warnings, responseLanguages.get(state));
           renderProviders(state.providers);
+          renderAccount();
+          renderInstalled();
           const backups = $('backup-list');
           backups.replaceChildren();
           text('backup-count', String(state.backups.length));
@@ -972,6 +1311,7 @@
         async function loadState(afterApply = false) {
           if (!sessionAllowed || applying) return;
           resetModels();
+          resetUsage();
           if (stateController) stateController.abort();
           const controller = new AbortController();
           stateController = controller;
@@ -1010,6 +1350,8 @@
               text('catalog-path', '尚未读取');
               text('providers-empty', '读取成功后显示已保存提供方');
               text('backups-empty', '读取成功后显示备份记录');
+              renderAccount();
+              renderInstalled();
             }
             if (sessionAllowed) {
               text('session-label', '本地状态读取失败');
@@ -1170,7 +1512,11 @@
           if (discoveryFields.includes(event.target.name)) resetModels();
           // A test result describes one model at one address; any change invalidates it.
           else if (event.target.name === 'model') resetConnection();
-          if (event.target.name === 'model') syncDefaultModelOptions();
+          if (event.target.name === 'model') {
+            syncDefaultModelOptions();
+            // The typed list is what makes a discovered ID a duplicate.
+            renderModelOptions();
+          }
           invalidatePlan();
           clearError();
           $('workflow').dataset.step = 'edit';
@@ -1187,6 +1533,7 @@
 
         $('fetch-models').addEventListener('click', fetchModels);
         $('test-connection').addEventListener('click', testConnection);
+        $('usage-button').addEventListener('click', usage);
         $('backup-select').addEventListener('change', updateControls);
         $('rollback-button').addEventListener('click', rollback);
         $('model-search').addEventListener('input', renderModelOptions);
@@ -1194,6 +1541,7 @@
           if (event.key === 'Enter') event.preventDefault();
         });
         $('model-select').addEventListener('change', () => {
+          pickedModels = new Set([...$('model-select').selectedOptions].map((option) => option.value));
           $('add-selected-models').disabled = ![...$('model-select').selectedOptions].length;
         });
         $('add-selected-models').addEventListener('click', addSelectedModels);
@@ -1522,6 +1870,29 @@
     .connection-note .icon { width: 14px; height: 14px; color: #909982; margin-top: 2px; }
     .connection-note p { font-size: 10px; color: var(--secondary); line-height: 1.9; }
     .connection-note strong { font-weight: 550; color: #5e6955; }
+    .fact-list { display: grid; gap: 7px; margin-top: 12px; }
+    .fact-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .fact-list dt { flex: 0 0 auto; font-size: 10px; color: #8a9479; }
+    .fact-list dd { font-size: 10px; color: var(--secondary); text-align: right; overflow-wrap: anywhere; }
+    .sub-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 17px; padding-top: 15px; border-top: 1px solid #eceee4; font-size: 11px; }
+    .chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; padding: 0; list-style: none; }
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid #e4e7dc; background: #f5f6f0; border-radius: 5px; font-size: 10px; color: #5e6955; }
+    .chip code { font: 10px var(--mono); color: #4d5745; }
+    .chip[data-flag="added"] { border-color: var(--green-line); background: #f0f5eb; color: #4b7042; }
+    .chip[data-flag="added"] code { color: #4b7042; }
+    .chip[data-flag="hidden"] { opacity: .55; }
+    .chip-marker { font-size: 9px; color: #8a9479; }
+    .usage-meter { display: grid; gap: 13px; margin-top: 12px; }
+    .usage-row { display: grid; gap: 5px; }
+    .usage-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 10px; color: var(--secondary); }
+    .usage-bar { height: 5px; border-radius: 3px; background: #eef0e7; overflow: hidden; }
+    .usage-bar > span { display: block; height: 100%; width: 0; background: #7d9068; }
+    .usage-bar[data-tone="warning"] > span { background: #c9973c; }
+    .usage-bar[data-tone="blocked"] > span { background: #b4552f; }
+    .usage-meta { font-size: 9px; color: #8a9479; overflow-wrap: anywhere; }
+    .usage-details { margin-top: 5px; }
+    .usage-details summary { font-size: 9px; color: #8a9479; cursor: pointer; }
+    .usage-details ul { margin: 6px 0 0; padding-left: 15px; font-size: 9px; color: var(--secondary); line-height: 1.7; }
     .status-strip { display: flex; gap: 8px; align-items: flex-start; margin: 17px 0 21px; font-size: 11px; color: var(--secondary); min-height: 20px; line-height: 1.8; }
     .status-strip .status-dot { margin-top: 7px; }
     .status-strip[data-tone="green"] .status-dot { background: var(--green); }
@@ -1848,6 +2219,25 @@
         </section>
         <aside class="context-column" data-i18n-aria-label aria-label="配置说明">
           <section class="guide-card"><div data-i18n class="guide-top"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg><h2 data-i18n>更改之前，心中有数</h2></div><ol class="guide-list"><li data-i18n class="guide-item"><span data-i18n class="guide-index">01</span><div data-i18n><h3 data-i18n>只改需要改的配置</h3><p data-i18n>预览准确的文件路径、TOML 变更片段，以及是否新建合并后的模型目录文件。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">02</span><div data-i18n><h3 data-i18n>由你确认，先备份再写入</h3><p data-i18n>核对更改并明确勾选确认后，才能应用。完成后展示实际备份目录。</p></div></li><li data-i18n class="guide-item"><span data-i18n class="guide-index">03</span><div data-i18n><h3 data-i18n>保存工作，手动重启</h3><p data-i18n>使用 ⌘Q 完全退出 Codex 后重新打开。已有会话不保证沿用新配置。</p></div></li></ol><div data-i18n class="guide-foot">预览 → 确认 → 应用</div></section>
+          <section class="card context-card" id="account-card">
+            <h3 data-i18n>Codex 现状<span data-i18n class="pill" id="account-badge">只读</span></h3>
+            <dl class="fact-list">
+              <div><dt data-i18n>套餐</dt><dd id="account-plan">—</dd></div>
+              <div><dt data-i18n>账号</dt><dd id="account-email">—</dd></div>
+              <div><dt data-i18n>套餐有效期</dt><dd id="account-subscription">—</dd></div>
+              <div><dt data-i18n>登录令牌</dt><dd id="account-token">—</dd></div>
+            </dl>
+            <p data-i18n class="field-hint" id="account-note" hidden></p>
+            <h4 data-i18n class="sub-heading">已有模型<span data-i18n class="pill" id="installed-count">—</span></h4>
+            <p data-i18n class="field-hint" id="installed-source">正在读取 Codex 的模型目录…</p>
+            <ul class="chip-list" id="installed-list"></ul>
+            <p data-i18n class="field-hint" id="installed-note" hidden></p>
+            <h4 data-i18n class="sub-heading">用量查询</h4>
+            <p data-i18n class="field-hint">用量只在你点击后查询一次。查询会把本机保存的 ChatGPT 登录令牌发给 chatgpt.com，不修改任何文件。</p>
+            <button data-i18n id="usage-button" class="button" type="button" disabled><span data-i18n id="usage-label">查询用量</span></button>
+            <p data-i18n class="field-hint" id="usage-status" role="status" aria-live="polite">尚未查询用量。套餐与模型列表不需要联网。</p>
+            <div class="usage-meter" id="usage-meter" hidden></div>
+          </section>
           <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器只渲染目录条目。勾选“写入模型目录”才会把你的模型合并进去；原始目录文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
           <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
           <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
@@ -1880,7 +2270,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">只展示本地服务返回的备份，不执行恢复或删除操作。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.3.0</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.4.0</span></footer>
     </main>
   </div>
 </body>

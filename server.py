@@ -16,13 +16,14 @@ import threading
 import urllib.request
 import webbrowser
 
+from account_info import fetch_usage
 from config_core import ConfigError, ConfigStore, atomic_write
 from connection_test import PROTOCOL, test_connection
 from model_discovery import discover_models
 from backend_i18n import translate_response, _EXACT_TRANSLATIONS, _TEMPLATES
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 MAX_BODY = 65536
 
 
@@ -49,12 +50,14 @@ class LocalServer(ThreadingHTTPServer):
         self.discovery_slots = threading.BoundedSemaphore(2)
         # A connection test spends real quota, so only one may run at a time.
         self.connection_slots = threading.BoundedSemaphore(1)
+        # The usage query carries the ChatGPT token; keep it strictly serial.
+        self.usage_slots = threading.BoundedSemaphore(1)
         self.token = token or secrets.token_urlsafe(32)
         self.origin = f"http://127.0.0.1:{self.server_port}"
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "WeSwitch/0.3.0"
+    server_version = "WeSwitch/0.4.0"
     sys_version = ""
 
     def log_message(self, *_):
@@ -133,7 +136,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.trusted(True):
             return
-        if self.path not in ("/api/preview", "/api/apply", "/api/models", "/api/connection-test", "/api/rollback"):
+        if self.path not in ("/api/preview", "/api/apply", "/api/models", "/api/connection-test",
+                             "/api/rollback", "/api/usage"):
             self.error("接口不存在。", "not_found", 404)
             return
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -178,6 +182,13 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.connection_slots.release()
             elif self.path == "/api/rollback":
                 result = self.server.store.restore(payload)
+            elif self.path == "/api/usage":
+                if not self.server.usage_slots.acquire(blocking=False):
+                    raise ConfigError("已有用量查询正在进行，请等待完成后重试。", "usage_busy", 429)
+                try:
+                    result = fetch_usage(self.server.store, payload)
+                finally:
+                    self.server.usage_slots.release()
             else:
                 result = self.server.store.apply(payload)
             self.send(200, result)

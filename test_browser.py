@@ -1,4 +1,5 @@
 """Real-browser bilingual regressions: disposable config, fake keys, owned loopback only."""
+import base64
 import copy
 import json
 import os
@@ -8,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 import tomllib
 from unittest import mock
 
@@ -23,6 +25,50 @@ REPLACEMENT_KEY = "sk-browser-replacement-only"
 CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]")
 PASSED = 0
 FAILURES = []
+
+ACCOUNT_ID = "acct-browser-test"
+USAGE_PATH = "/backend-api/wham/usage/plan_limit_history"
+
+
+def _segment(payload):
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _jwt(claims):
+    return _segment({"alg": "none"}) + "." + _segment(claims) + "." + _segment({"sig": "x"})
+
+
+# A ChatGPT login as the desktop app really stores it: the plan, the e-mail and the
+# expiry all live inside the access token, which is itself a JWT.
+LOGIN_CLAIMS = {
+    "https://api.openai.com/auth": {
+        "chatgpt_plan_type": "plus",
+        "chatgpt_subscription_active_until": "2026-10-26T12:07:33+00:00",
+        "chatgpt_account_id": ACCOUNT_ID,
+    },
+    "https://api.openai.com/profile": {"email": "browser-test@example.invalid"},
+    "exp": int(time.time()) + 3600,
+}
+USAGE_TOKEN = _jwt(LOGIN_CLAIMS)
+
+# Deliberately ordered so that the service returns the 7-day window first, and only
+# a client-side sort puts the shorter window on top.
+USAGE_BODY = {
+    "data_as_of": "2026-10-01T00:00:00Z",
+    "coverage_start": "2026-09-24T00:00:00Z",
+    "coverage_complete": False,
+    "approximate": True,
+    "periods": [
+        {"id": "week", "window_minutes": 10080, "plan_type": "plus",
+         "starts_at": "2026-09-30T05:00:00Z", "ends_at": "2026-10-07T05:00:00Z",
+         "accounting_complete": True, "used_basis_points": 10107, "breakdowns": [
+             {"dimension": "model", "rows": [{"key": "gpt-5.2-codex", "basis_points": 7000},
+                                             {"key": "gpt-5.2", "basis_points": 3107}]}]},
+        {"id": "five", "window_minutes": 300, "plan_type": "plus",
+         "starts_at": "2026-09-23T06:00:00Z", "ends_at": "2026-09-23T11:00:00Z",
+         "accounting_complete": False, "used_basis_points": 4210, "breakdowns": []},
+    ],
+}
 
 
 def browser(*args):
@@ -180,6 +226,13 @@ def main():
         # A real catalog, so the merge path is exercised instead of skipped.
         (home / "model_catalog.json").write_bytes(json.dumps(
             {"models": [{"slug": "official-one", "display_name": "Official One"}]}).encode())
+        # A real ChatGPT login, so the plan and model facts are exercised without
+        # any network access at all.
+        (home / "auth.json").write_text(json.dumps({
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": USAGE_TOKEN, "id_token": _jwt(LOGIN_CLAIMS),
+                       "account_id": ACCOUNT_ID},
+        }))
         store = ConfigStore(home, keychain=FakeKeychain(), demo=True)
         # Do not read metadata from a real installed application, even for screenshots.
         store.app_info = lambda: {"path": str(home / "TEST-ONLY-Codex.app"), "version": "TEST ONLY", "cli_version": "TEST ONLY"}
@@ -206,6 +259,9 @@ def main():
                 # An upstream echoing the credential must never surface it in the UI.
                 reply(handler, {"object": "response", "model": "sk-browser-test-only leaked",
                                 "output": []})
+            elif handler.path.startswith("/backend-api" + "/wham/usage"):
+                # The usage endpoint, including its ?days= window, as the app calls it.
+                reply(handler, USAGE_BODY)
             else:
                 reply(handler, {"error": "private-upstream-message"}, status=404)
 
@@ -224,7 +280,9 @@ def main():
         worker.start()
         upstream_thread.start()
         try:
-            with mock.patch.object(socket.socket, "connect", owned_connect):
+            with mock.patch.object(socket.socket, "connect", owned_connect), \
+                    mock.patch.dict(os.environ, {"CODEX_API_BASE_URL": upstream.origin + "/backend-api",
+                                                 "CODEX_API_ENDPOINT": ""}):
                 browser("open", server.origin + "/#token=" + server.token)
                 browser("snapshot", "-i")
                 # Remove only our preference, then reload with a fresh fragment: never clear unrelated storage.
@@ -241,6 +299,22 @@ def main():
                 texts({"workspace-title": "为 Codex 接入你的模型", "form-title": "提供方配置", "preview-label": "预览配置更改"},
                       "Default Chinese heading and static form")
                 storage_check("Initial isolated browser", server.token)
+                # Local facts, decoded from files on disk: no request is involved.
+                texts({"account-plan": "Plus", "account-email": "browser-test@example.invalid"},
+                      "Chinese account card decodes the plan and e-mail locally")
+                check("document.getElementById('account-subscription').textContent.length>0 && "
+                      "document.getElementById('account-token').textContent.length>0 && "
+                      "document.getElementById('account-note').hidden",
+                      "Subscription, token expiry and no-note state for a signed-in account")
+                texts({"installed-count": "1 个",
+                       "installed-source": "来自当前 model_catalog_json 指向的目录：" + str(home / "model_catalog.json")},
+                      "Chinese card reports the configured catalog as the model source")
+                check("document.querySelectorAll('#installed-list .chip').length===1 && "
+                      "document.querySelector('#installed-list code').textContent==='official-one' && "
+                      "document.querySelector('#installed-list .chip-marker').textContent==='已在目录中 · 已隐藏'",
+                      "The already-installed model list shows the real slug and why it is a duplicate")
+                expect(not [r for r in upstream.records if "usage" in r["path"]],
+                       "Reading the plan and model list contacts nothing", upstream.records)
                 # Observe actual fetches; do not replace responses or call the backend directly.
                 js("""window.__requests=[];window.__fetch=window.fetch;
                   window.fetch=async(input,init={})=>{
@@ -333,7 +407,11 @@ def main():
                 check("document.getElementById('model').value.split(String.fromCharCode(10)).join()==='test-model,another-model'", "Several discovered models are added in one step under the same provider")
                 js("document.getElementById('model').value='test-model';document.getElementById('model').dispatchEvent(new Event('input',{bubbles:true}));true")
                 toggle("en", upstream, store, "Switch selected discovery result")
-                texts({"models-filter-status": "Showing 2 / 2 model IDs"}, "English dynamic discovery count")
+                # test-model is already typed into the field, so it is marked as a
+                # duplicate and left unselected: that is the whole point of the count.
+                texts({"models-filter-status": "Showing 2 / 2 model IDs, of which 1 are already added "
+                                               "(unchecked by default; you can still select them manually)."},
+                      "English dynamic discovery count")
                 expected_warnings = [translate_text(s, "en") for s in discovery.get("warnings", [])]
                 actual_warnings = value("[...document.querySelectorAll('#models-warnings li')].map(e=>e.textContent)")
                 expect(actual_warnings == expected_warnings, "Known Chinese discovery warnings translate in place", actual_warnings)
@@ -439,6 +517,110 @@ def main():
                 expect(len([r for r in upstream.records if r["method"] == "POST"]) == 3, "Exactly three confirmed probes reached the provider")
                 expect(config.read_bytes() == initial, "Connection tests never write configuration")
 
+                # Usage: the third local fact is the only one that needs the network,
+                # so it is sent once, on click, after its own explicit consent.
+                def usage_records():
+                    return [r for r in upstream.records if "usage" in r["path"]]
+
+                toggle("zh-CN", upstream, store, "Chinese usage consent")
+                js("window.__consent=false;true")
+                click("usage-button")
+                check("window.__confirmations.at(-1)===" + json.dumps(
+                    "用量只查询一次：将读取本机保存的 ChatGPT 登录令牌，并用它向 chatgpt.com 发送一次只读请求。"
+                    "不修改配置、不上传配置文件、不保存令牌。是否继续？"),
+                    "Exact Chinese usage consent dialog")
+                check("document.getElementById('usage-status').textContent.startsWith('已取消')", "Chinese usage cancellation status")
+                expect(not usage_records(), "A cancelled Chinese usage dialog sends nothing")
+                toggle("en", upstream, store, "English usage consent")
+                click("usage-button")
+                check("window.__confirmations.at(-1)===" + json.dumps(
+                    "Usage is queried once: the ChatGPT token stored on this Mac is read and used to send one "
+                    "read-only request to chatgpt.com. No configuration is changed, no configuration file is "
+                    "uploaded, and no token is saved. Continue?"),
+                    "Exact English usage consent dialog")
+                check("document.getElementById('usage-status').textContent.startsWith('Cancelled.')", "English usage cancellation status")
+                expect(not usage_records(), "A cancelled English usage dialog sends nothing")
+                check("document.getElementById('usage-meter').hidden", "No usage meter before any confirmed query")
+                js("window.__consent=true;document.getElementById('usage-button').click();true")
+                wait_for("!document.getElementById('usage-button').disabled && !document.getElementById('usage-meter').hidden")
+                usage = latest_response("/api/usage", "en", 200, "English usage query")
+                expect(usage.get("ok") is True and usage.get("http_status") == 200
+                       and len(usage.get("periods", [])) == 2 and usage.get("endpoint") == upstream.origin + "/backend-api",
+                       "The usage response is parsed into two windows", usage)
+                sent = usage_records()
+                expect(len(sent) == 1 and sent[0]["method"] == "GET"
+                       and sent[0]["path"] == USAGE_PATH + "?days=7"
+                       and sent[0]["headers"].get("authorization") == ["Bearer " + USAGE_TOKEN]
+                       and sent[0]["headers"].get("originator") == ["Codex Desktop"]
+                       and sent[0]["headers"].get("chatgpt-account-id") == [ACCOUNT_ID]
+                       and sent[0]["body"] == b"",
+                       "Exactly one authenticated usage GET with the documented window", sent)
+                check("document.getElementById('usage-status').textContent.includes('Queried') && "
+                      "document.getElementById('usage-status').dataset.tone==='warning'",
+                      "English usage verdict flags estimated, incomplete coverage")
+                rows = value("[...document.querySelectorAll('#usage-meter .usage-row')].map(r=>({"
+                             "name:r.querySelector('.usage-top span').textContent,"
+                             "amount:r.querySelectorAll('.usage-top span')[1].textContent,"
+                             "tone:r.querySelector('.usage-bar').dataset.tone,"
+                             "width:r.querySelector('.usage-bar > span').style.width}))")
+                expect(rows == [{"name": "5-hour window", "amount": "42.1%", "tone": "neutral", "width": "42.1%"},
+                                {"name": "7-day window", "amount": "101.07%", "tone": "blocked", "width": "100%"}],
+                       "Windows render shortest first, and an over-quota bar is capped but blocked-toned", rows)
+                check("document.getElementById('usage-meter').textContent.includes('Data as of') && "
+                      "document.getElementById('usage-meter').textContent.includes('Coverage starts')",
+                      "Coverage dates are rendered client-side in English")
+                breakdown = value("[...document.querySelectorAll('#usage-meter .usage-details li')].map(e=>e.textContent)")
+                expect(breakdown == ["By model: gpt-5.2-codex 70% · gpt-5.2 31.07%"],
+                       "Breakdown rows are labelled and formatted client-side", breakdown)
+                expect(not [r for r in upstream.records if r["method"] != "GET" and "usage" in r["path"]],
+                       "The usage query is read-only")
+                expect(config.read_bytes() == initial and not store.keychain.items,
+                       "A confirmed usage query writes nothing")
+                check("!document.body.textContent.includes(" + json.dumps(USAGE_TOKEN) + ")",
+                      "The ChatGPT token never reaches the page")
+                audit_english("English usage result")
+                toggle("zh-CN", upstream, store, "Chinese usage result")
+                texts({"usage-label": "查询用量"}, "Chinese usage result restores the button label")
+                check("document.getElementById('usage-meter').textContent.includes('数据截至') && "
+                      "document.getElementById('usage-meter').textContent.includes('按模型：')",
+                      "Rendered usage is retranslated without a new query")
+                expect(len(usage_records()) == 1, "Switching locale never re-sends the usage query")
+                toggle("en", upstream, store, "Return usage result to English")
+                audit_english("English restored usage result")
+
+                # A non-ChatGPT login has no plan usage to read, so the query is withheld
+                # at the source instead of failing only after a click.
+                chatgpt_auth = (home / "auth.json").read_bytes()
+                (home / "auth.json").write_text(json.dumps({
+                    "auth_mode": "apikey", "OPENAI_API_KEY": "sk-browser-test-only"}))
+                click("refresh-button")
+                wait_for("document.getElementById('usage-button').disabled && "
+                         "document.getElementById('account-plan').textContent==='plan not available'")
+                check("!document.getElementById('account-note').hidden && "
+                      "document.getElementById('account-note').textContent==='Codex is signed in with an API key, "
+                      "so there is no ChatGPT plan information to read.'",
+                      "An API-key login explains why usage is unavailable")
+                check("document.getElementById('usage-status').textContent===" + json.dumps(
+                    "Usage not queried yet. The plan and model list need no network access."),
+                    "Refreshing into an API-key login disables the query and re-hides the meter")
+                expect(len(usage_records()) == 1, "A disabled usage button sends no request")
+                audit_english("English API-key account")
+                toggle("zh-CN", upstream, store, "Chinese API-key account")
+                check("document.getElementById('account-note').textContent==" + json.dumps(
+                    "当前 Codex 使用 API Key 登录，没有 ChatGPT 套餐信息可读。"),
+                    "The API-key note is translated from the same state")
+                toggle("en", upstream, store, "Return the API-key account to English")
+
+                # The gate follows the state in both directions: restoring the ChatGPT
+                # login re-enables the query rather than latching it off for the session.
+                (home / "auth.json").write_bytes(chatgpt_auth)
+                click("refresh-button")
+                wait_for("!document.getElementById('usage-button').disabled")
+                check("document.getElementById('account-note').hidden && "
+                      "document.getElementById('account-plan').textContent==='Plus'",
+                      "Restoring the ChatGPT login re-enables the query")
+                expect(len(usage_records()) == 1, "Re-enabling the button still sends nothing on its own")
+
                 # Preserve the original no-auth preview/stale/confirm/apply/backup workflow.
                 click("new-provider")
                 fill({"name": "TEST ONLY Browser", "provider_id": "browser-test", "base_url": upstream.origin + "/unsupported",
@@ -526,8 +708,9 @@ def main():
                 gets = [r for r in upstream.records if r["method"] == "GET"]
                 posts = [r for r in upstream.records if r["method"] == "POST"]
                 expect(requests_before == len(upstream.records), "Reloading never contacts the provider")
-                expect(len(gets) == 3 and all(r["path"] in ("/v1/models", "/unsupported/models", "/empty/models") for r in gets),
-                       "Exactly three consented loopback model GETs", [r["path"] for r in gets])
+                expect(len(gets) == 4 and [r["path"] for r in gets] == [
+                    "/v1/models", "/unsupported/models", "/empty/models", USAGE_PATH + "?days=7"],
+                       "Exactly three consented model GETs and one consented usage GET", [r["path"] for r in gets])
                 expect(len(posts) == 3 and all(r["path"].endswith("/responses") for r in posts),
                        "Only the three confirmed probes called model generation", [r["path"] for r in posts])
                 expect(len(list((home / "model-ui-backups").glob("*/config.toml"))) == 2, "Language switches and token gate never reapply")

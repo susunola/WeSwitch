@@ -62,9 +62,12 @@ def redact(value, secret):
     """
     if not isinstance(value, str):
         return ""
-    value = value[:MAX_FIELD]
+    # Replace before truncating: a credential longer than MAX_FIELD would otherwise
+    # be cut short first and no longer match, letting its first MAX_FIELD characters
+    # through. ChatGPT access tokens are JWTs and are far longer than this limit.
     if secret:
         value = value.replace(secret, "[redacted]")
+    value = value[:MAX_FIELD]
     value = "".join(c for c in value if 32 <= ord(c) < 127 or c in "-_.:/@")
     value = value.strip()
     if not value or any(ord(c) < 32 for c in value) or " " in value:

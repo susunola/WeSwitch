@@ -139,6 +139,19 @@ class PureFunctionTests(ConnectionFixture):
         self.assertEqual(probe.redact("line\nbreak", ""), "linebreak")
         self.assertEqual(probe.redact("x" * 500, ""), "x" * probe.MAX_FIELD)
 
+    def test_redact_replaces_a_credential_longer_than_the_field_limit(self):
+        # Regression: truncating before replacing cut a long credential short, so it
+        # no longer matched and its first MAX_FIELD characters — the whole JWT header
+        # and part of the payload — were returned to the caller. ChatGPT access tokens
+        # are JWTs and are several times this limit.
+        long_token = ("eyJhbGciOiJub25lIn0." + "p" * (probe.MAX_FIELD * 4) + ".c2ln")
+        self.assertGreater(len(long_token), probe.MAX_FIELD)
+        self.assertEqual(probe.redact(long_token, long_token), "[redacted]")
+        self.assertEqual(probe.redact("prefix-" + long_token, long_token), "prefix-[redacted]")
+        # A value that mixes the credential with spaced text is still dropped whole.
+        self.assertEqual(probe.redact("Bearer " + long_token, long_token), "")
+        self.assertEqual(probe.redact(f"token={long_token}", long_token), "token=[redacted]")
+
     def test_parse_body_rejects_oversized_non_json_and_non_object_replies(self):
         self.assertIsNone(probe.parse_body(b"x" * (probe.MAX_BYTES + 1)))
         self.assertIsNone(probe.parse_body(b"not json"))

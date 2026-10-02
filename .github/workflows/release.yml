@@ -9,7 +9,7 @@ on:
         description: 'Existing release tag, for example v0.1.0'
         required: true
         type: string
-        default: v0.2.0
+        default: v0.6.1
 
 permissions:
   contents: read
@@ -97,6 +97,15 @@ jobs:
         with:
           name: WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64
           path: release-assets
+      # The notes live in the repository, not inline in this file. An inline
+      # `--notes` block silently ships the *previous* release's text, because a
+      # workflow file only changes when someone remembers to edit it. Reading
+      # docs/release-notes/<tag>.md from the default branch means the notes are
+      # authored alongside the release and can be corrected by a re-run.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Verify artifacts and publish the existing tag
         working-directory: release-assets
         env:
@@ -104,37 +113,25 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+          NOTES: ${{ github.workspace }}/docs/release-notes/${{ needs.prepare.outputs.tag }}.md
         shell: bash
         run: |
           set -euo pipefail
           archive="WeSwitch-$RELEASE_TAG-macos-arm64.zip"
           sha256sum --check "$archive.sha256"
+          notes_file="docs/release-notes/$RELEASE_TAG.md"
+          if [[ ! -f "$NOTES" ]]; then
+            printf '%s\n' "$notes_file is missing on the default branch." \
+                          "Add it in the release commit, then re-run this workflow." >&2
+            exit 1
+          fi
+          # Guard against publishing another release's notes.
+          if ! head -n 1 "$NOTES" | grep -Fq "$RELEASE_TAG"; then
+            printf '%s\n' "$notes_file does not name $RELEASE_TAG on its first line." >&2
+            exit 1
+          fi
           current_commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
           test "$current_commit" = "$BUILD_COMMIT"
           gh release create "$RELEASE_TAG" "$archive" "$archive.sha256" \
             --repo "$GH_REPO" --verify-tag --title "WeSwitch $RELEASE_TAG" \
-            --notes '## WeSwitch ${{ needs.prepare.outputs.tag }}
-
-          Batch model configuration for Codex Mac. Chinese by default, with an English toggle.
-          一次添加多个模型：一个提供方、一份凭据，多个模型 ID（如 Pro / Flash）同时保存。
-
-          ### Downloads
-          - Apple Silicon: `WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64.zip`. Extract and open WeSwitch.app. Python is bundled, so no Python, Homebrew or WorkBuddy installation is needed; the app opens a local browser UI.
-          - Intel Mac: use the source archive or `Start WeSwitch.command` with Python 3.11+. No standalone Intel binary is included.
-
-          ### What is new
-          - Add several models at once: one model ID per line, or multi-select from a fetched list. The default model is written to the root `model`; the rest are saved as named Codex profiles under the same provider.
-          - Codex has no per-provider model list, so profiles are the supported mechanism. Profile names combine the provider ID and model ID. Existing profiles with settings this tool does not write are never overwritten.
-          - Editing a saved provider reloads every model previously saved for it.
-
-          ### Verification
-          - 198 unit/API/localization tests and 163 real-browser assertions passed.
-          - GitHub CI passed on Python 3.11 and 3.13; the macOS 14 arm64 build and isolated standalone smoke test passed.
-          - A SHA-256 companion file is published for the app ZIP. Checksums verify file integrity, not publisher identity.
-
-          ### Limitations
-          - No Developer ID signing or Apple notarization. An ad-hoc signature is not a verified publisher identity; Gatekeeper may warn or block launch. Do not disable Gatekeeper globally.
-          - Switching between saved models depends on your Codex build supporting profiles. This tool does not guarantee that the desktop model picker shows them.
-          - Listing models is metadata discovery, not a Responses/tool-call compatibility test. Restart Codex fully after applying changes.
-
-          MIT License. Independent community project; not affiliated with OpenAI. See README.md and README.en.md.'
+            --notes-file "$NOTES"

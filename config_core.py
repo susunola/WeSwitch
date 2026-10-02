@@ -411,6 +411,7 @@ class ConfigStore:
                 # states the rule from the same constants the pruning uses.
                 "backup_keep_recent": MAX_BACKUPS, "backup_keep_oldest": True,
                 "warnings": warnings, "demo": self.demo,
+                "managed_models": self.managed_models(),
             }
 
     def preview(self, payload):
@@ -552,6 +553,9 @@ class ConfigStore:
                 provider.add("auth", auth)
             elif f["auth_mode"] == "env":
                 provider.add("env_key", f["env_key"])
+            if f["auth_mode"] == "keychain":
+                changes.append("桌面端使用当前提供方的 Key；auth.json 里的官方登录保持不动。")
+                warnings.append("Key 会写入当前提供方的 experimental_bearer_token，供桌面端读取。不要在下拉里改回官方模型，否则请求仍会发到 OpenAI。")
             snippet = tomlkit.document()
             changes = [f"{'更新' if existing else '添加'}供应商：{provider_id}",
                        "合并写入新的模型目录；原始目录文件保留在备份中" if f["write_catalog"]
@@ -966,7 +970,13 @@ class ConfigStore:
                         cache_path = Path(cache.get("path", ""))
                         if cache.get("rendered") and not cache_path.is_symlink():
                             atomic_write(cache_path, cache["rendered"])
-                    atomic_write(self.path, plan["rendered"])
+                    rendered = plan["rendered"]
+                    if secret and f["auth_mode"] == "keychain":
+                        written = tomlkit.parse(rendered.decode("utf-8"))
+                        written["model_providers"][f["provider_id"]]["experimental_bearer_token"] = secret
+                        rendered = tomlkit.dumps(written).encode("utf-8")
+                    atomic_write(self.path, rendered)
+                    plan["rendered"] = rendered
                 except KeychainError as e:
                     raise ConfigError(str(e), "keychain_failed") from None
                 except OSError:
@@ -984,6 +994,7 @@ class ConfigStore:
                 # under us. The backup just taken is protected explicitly: if the
                 # clock moved backwards its name could sort older than the limit.
                 pruned = self.prune_backups(protected={plan["backup_id"]})
+                self.remember_models(f["provider_id"], f["models"], f["base_url"])
                 return {
                     "ok": True, "backup_path": str(backup), "config_path": str(self.path),
                     "provider_id": f["provider_id"], "model": f["model"], "models": f["models"],
@@ -997,3 +1008,67 @@ class ConfigStore:
                                 "skipped": catalog["skipped"], "count": catalog["count"]} if catalog else None,
                     "message": "配置已备份并写入。请保存工作，完全退出应用（⌘Q）后重新打开，再用新会话验证模型。",
                 }
+
+
+    def managed_path(self):
+        return self.home / "weswitch-managed.json"
+
+    def managed_models(self):
+        path = self.managed_path()
+        if not path.is_file() or path.is_symlink():
+            return []
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return []
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, dict):
+            return []
+        return [{"slug": slug, "provider_id": item.get("provider_id", "")}
+                for slug, item in models.items()
+                if isinstance(slug, str) and isinstance(item, dict) and not official_slug(slug)]
+
+    def remember_models(self, provider_id, models, base_url):
+        path = self.managed_path()
+        current = {}
+        if path.is_file() and not path.is_symlink():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded.get("models"), dict):
+                    current = loaded["models"]
+            except (OSError, ValueError):
+                current = {}
+        for model in models:
+            if official_slug(model):
+                continue
+            current[model] = {"provider_id": provider_id, "base_url": base_url}
+        atomic_write(path, json.dumps({"models": current}, ensure_ascii=False, indent=2).encode())
+
+    def remove_models(self, payload):
+        if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+            raise ConfigError("请先确认删除。", "confirmation_required")
+        requested = payload.get("models")
+        if not isinstance(requested, list) or not requested or not all(isinstance(item, str) for item in requested):
+            raise ConfigError("请选择要删除的自定义模型。")
+        managed = {item["slug"] for item in self.managed_models()}
+        blocked = [item for item in requested if official_slug(item) or item not in managed]
+        if blocked:
+            raise ConfigError("只能删除本工具添加的模型，默认 GPT 模型不会删除。")
+        from model_catalog import load_catalog, remove_slugs, render
+        removed = []
+        for path in (self.home / "models.json", self.home / "models_cache.json"):
+            if path.is_file() and not path.is_symlink():
+                document, gone = remove_slugs(load_catalog(path), requested)
+                if gone:
+                    atomic_write(path, render(document))
+                    removed.extend(gone)
+        path = self.managed_path()
+        data = json.loads(path.read_text())
+        for item in requested:
+            data["models"].pop(item, None)
+        atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2).encode())
+        return {"removed": sorted(set(removed)), "message": "已从目录和选择器缓存删除所选自定义模型。默认 GPT 模型未改动。请完全退出 Codex 后再打开。"}
+
+
+def official_slug(slug):
+    return slug.startswith(("gpt-", "gpt", "o1", "o3", "o4", "codex-", "chatgpt-"))

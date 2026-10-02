@@ -57,7 +57,7 @@ def main():
 
             assert b'lang="zh-CN"' in request("/")
             assert b"WeSwitchI18n" in request("/i18n.js")
-            assert json.loads(request("/api/state"))["tool_version"] == "0.6.2"
+            assert json.loads(request("/api/state"))["tool_version"] == "0.6.3"
             try:
                 request("/api/state", authenticated=False)
                 raise AssertionError("Unauthenticated request unexpectedly succeeded")

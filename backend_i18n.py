@@ -104,6 +104,14 @@ _EXACT_TRANSLATIONS = {
         "After the catalog is written, the desktop picker uses this file; later remote catalog updates from Codex will no longer take effect. Point model_catalog_json back at the original path to restore that.",
     "目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。":
         "Catalog entries only determine the desktop display name and reasoning options; requests still use the model ID and API URL you entered.",
+    "请先确认删除。": "Confirm the deletion first.",
+    "请选择要删除的自定义模型。": "Select the custom models to remove.",
+    "只能删除本工具添加的模型，默认 GPT 模型不会删除。": "Only models added by this tool can be removed. Default GPT models are not deleted.",
+    "已从目录和选择器缓存删除所选自定义模型。默认 GPT 模型未改动。请完全退出 Codex 后再打开。": "Removed the selected custom models from the catalog and picker cache. Default GPT models were not changed. Fully quit Codex, then open it again.",
+    "桌面端使用当前提供方的 Key；auth.json 里的官方登录保持不动。":
+        "The desktop app uses this provider key; the official login in auth.json is left unchanged.",
+    "Key 会写入当前提供方的 experimental_bearer_token，供桌面端读取。不要在下拉里改回官方模型，否则请求仍会发到 OpenAI。":
+        "The key is written to this provider as experimental_bearer_token so the desktop app can read it. Do not switch back to an official model in the picker, or the request still goes to OpenAI.",
     "在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。":
         "Enable all reasoning effort options under [desktop] so the selected effort is not hidden by the UI.",
     "写入 preferred_auth_method 与 forced_login_method，启动后直接使用 API Key 登录。":

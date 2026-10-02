@@ -160,11 +160,11 @@
           // there is none, so the switch is cleared rather than previewed and rejected.
           const allowed = fields.auth_mode.value !== 'none';
           if (!allowed) $('force_api_login').checked = false;
-          else if (allowed !== loginAllowed) $('force_api_login').checked = true;
+          else if (allowed !== loginAllowed) $('force_api_login').checked = false;
           loginAllowed = allowed;
           $('force_api_login').disabled = !allowed;
           text('force-api-login-note', allowed
-            ? '写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。'
+            ? '默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。'
             : '无认证模式没有可用于登录的凭据，因此不写入登录方式。');
         }
 
@@ -1347,6 +1347,7 @@
           const backups = $('backup-list');
           backups.replaceChildren();
           text('backup-count', String(state.backups.length));
+          renderManaged(state.managed_models);
           $('backups-empty').hidden = state.backups.length > 0;
           text('backups-empty', '服务尚未返回备份记录。应用配置后，可在这里查看。');
           // Stated from the constants the pruning itself uses, so the number on
@@ -1632,6 +1633,26 @@
         $('usage-button').addEventListener('click', usage);
         $('backup-select').addEventListener('change', updateControls);
         $('rollback-button').addEventListener('click', rollback);
+        function renderManaged(models) {
+          const select = $('remove-select');
+          if (!select) return;
+          select.replaceChildren();
+          (models || []).forEach((item) => {
+            const option = document.createElement('option');
+            option.value = item.slug;
+            option.textContent = item.slug;
+            select.append(option);
+          });
+          $('remove-button').disabled = !models || !models.length;
+        }
+        $('remove-button').addEventListener('click', async () => {
+          const models = [...$('remove-select').selectedOptions].map((option) => option.value);
+          if (!models.length) return;
+          if (!window.confirm('删除所选自定义模型？默认 GPT 模型不会受影响。')) return;
+          const data = await api('/api/remove', { body: { confirmed: true, models } });
+          text('remove-status', data.message || '已删除。');
+          await loadState();
+        });
         $('model-search').addEventListener('input', renderModelOptions);
         $('model-search').addEventListener('keydown', (event) => {
           if (event.key === 'Enter') event.preventDefault();
@@ -2375,8 +2396,8 @@
                   <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint">桌面端选择器读的是模型目录和 models_cache.json，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，并同步选择器缓存，原文件先备份。</p></div>
                 </div>
                 <div data-i18n class="settings-row checkbox-row">
-                  <label data-i18n class="field-label" for="force_api_login"><input type="checkbox" id="force_api_login" name="force_api_login" checked>强制 API Key 登录</label>
-                  <div data-i18n class="row-control"><p data-i18n id="force-api-login-note" class="field-hint">写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。</p></div>
+                  <label data-i18n class="field-label" for="force_api_login"><input type="checkbox" id="force_api_login" name="force_api_login">强制 API Key 登录</label>
+                  <div data-i18n class="row-control"><p data-i18n id="force-api-login-note" class="field-hint">默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。</p></div>
                 </div>
               </div>
             </fieldset>
@@ -2406,6 +2427,7 @@
           </section>
           <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器读的是模型目录和 models_cache.json。勾选“写入模型目录”才会把你的模型合并进去，并同步选择器缓存；原始文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
           <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><p class="field-hint" id="backup-policy"></p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
+          <section class="card context-card" id="remove-card"><h3 data-i18n>删除自定义模型</h3><p data-i18n>只删除本工具添加的模型。默认 GPT 模型不会出现在这里，也不会被删除。</p><select id="remove-select" multiple size="4" aria-describedby="remove-hint"></select><p data-i18n id="remove-hint" class="field-hint">从模型目录和选择器缓存移除所选条目。</p><button data-i18n id="remove-button" class="button" type="button" disabled>删除所选模型</button><p data-i18n id="remove-status" class="field-hint" role="status" aria-live="polite">尚未删除。</p></section>
           <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
         </aside>
       </div>
@@ -2436,7 +2458,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.2</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.3</span></footer>
     </main>
   </div>
 </body>

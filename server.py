@@ -23,7 +23,7 @@ from model_discovery import discover_models
 from backend_i18n import translate_response, _EXACT_TRANSLATIONS, _TEMPLATES
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 MAX_BODY = 65536
 
 
@@ -57,7 +57,7 @@ class LocalServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "WeSwitch/0.6.2"
+    server_version = "WeSwitch/0.6.3"
     sys_version = ""
 
     def log_message(self, *_):
@@ -137,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted(True):
             return
         if self.path not in ("/api/preview", "/api/apply", "/api/models", "/api/connection-test",
-                             "/api/rollback", "/api/usage"):
+                             "/api/rollback", "/api/usage", "/api/remove"):
             self.error("接口不存在。", "not_found", 404)
             return
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -182,6 +182,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.connection_slots.release()
             elif self.path == "/api/rollback":
                 result = self.server.store.restore(payload)
+            elif self.path == "/api/remove":
+                result = self.server.store.remove_models(payload)
             elif self.path == "/api/usage":
                 if not self.server.usage_slots.acquire(blocking=False):
                     raise ConfigError("已有用量查询正在进行，请等待完成后重试。", "usage_busy", 429)

@@ -347,3 +347,19 @@ def plan(home, source_entries, models, provider_name, effort, source_path="", se
         "count": len(catalog["models"]),
         "source_count": len(source_entries),
     }
+
+
+def remove_slugs(document, slugs):
+    """Drop only the named slugs. Every other entry, including official GPT models, stays."""
+    wanted = {slug for slug in slugs if isinstance(slug, str) and slug}
+    models = document.get("models") if isinstance(document, dict) else None
+    if not isinstance(models, list):
+        return document, []
+    kept, removed = [], []
+    for entry in models:
+        slug = entry.get("slug") if isinstance(entry, dict) else None
+        if slug in wanted:
+            removed.append(slug)
+        else:
+            kept.append(entry)
+    return {"models": kept}, removed

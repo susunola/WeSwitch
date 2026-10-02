@@ -553,14 +553,14 @@ class ConfigStore:
                 provider.add("auth", auth)
             elif f["auth_mode"] == "env":
                 provider.add("env_key", f["env_key"])
-            if f["auth_mode"] == "keychain":
-                changes.append("桌面端使用当前提供方的 Key；auth.json 里的官方登录保持不动。")
-                warnings.append("Key 会写入当前提供方的 experimental_bearer_token，供桌面端读取。不要在下拉里改回官方模型，否则请求仍会发到 OpenAI。")
             snippet = tomlkit.document()
             changes = [f"{'更新' if existing else '添加'}供应商：{provider_id}",
                        "合并写入新的模型目录；原始目录文件保留在备份中" if f["write_catalog"]
                        else "保留现有模型目录和其他供应商"]
             changes.extend(catalog_changes)
+            if f["auth_mode"] == "keychain":
+                changes.append("桌面端使用当前提供方的 Key；auth.json 里的官方登录保持不动。")
+                warnings.append("Key 会写入当前提供方的 experimental_bearer_token，供桌面端读取。不要在下拉里改回官方模型，否则请求仍会发到 OpenAI。")
             if len(f["models"]) > 1:
                 changes.append(f"一次添加 {len(f['models'])} 个模型：{'、'.join(f['models'])}")
             if f["save_profiles"]:

@@ -12,10 +12,11 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 - Edit providers, model IDs, and default model settings; preview changes before explicitly applying them.
 - **Consent → byte-exact, verified backup → atomic configuration write.** If no original file exists, its absence is recorded instead of inventing a backup.
-- Newly entered managed API keys live in macOS Keychain, not as secret values in configuration or process arguments.
+- Newly entered managed API keys still go to macOS Keychain. After you confirm in the UI, the same key is also written to the current provider as `experimental_bearer_token`, so the desktop app can send it. The official login in `auth.json` is left unchanged.
 - Optional model discovery sends `GET <base>/models` only after separate, explicit consent. No generation calls are made, and listing models is not a compatibility test.
 - **Add several models at once:** one provider entry, one credential, many model IDs (for example Pro and Flash), each saved as a switchable profile.
-- **Optional model catalog write:** the desktop picker renders only the entries of `model_catalog_json`. When enabled, your models are merged into a new catalog file and the existing one is backed up first; when disabled, no catalog file is touched.
+- **Desktop uses one provider at a time:** enter the URL and key, pull models with that key, and enable the catalog write. Leave "force API key login" off. Fully quit Codex after applying, then start a new chat. Do not switch back to an official GPT model in the picker, or the request still goes to OpenAI.
+- **Remove models this tool added:** "Remove custom models" deletes only entries this tool recorded. Default GPT models are not listed and cannot be removed.
 - **Optional connection and protocol check:** after consent, **one minimal request** (at most 16 output tokens) is sent to confirm the endpoint accepts Codex's only wire protocol. It may cost a small amount of quota; it reports the result and saves no key or configuration.
 - **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible. The backup directory keeps the most recent 5 plus the original, clearing anything beyond that after an apply or a restore.
 - **See what Codex already has first:** plan, account, subscription expiry, and login-token status are read **offline** from local sign-in data, and the installed model list from the local catalog. Models you already have are marked and **left unchecked by default**, so the same model cannot be added twice by accident.
@@ -111,7 +112,7 @@ Catalog entries only decide the desktop display name and reasoning options; requ
 | Browser server | Binds only to `127.0.0.1`; APIs require a session token and enforce Host / Origin checks |
 | ChatGPT sign-in data | `~/.codex/auth.json`; parsed read-only for plan and token status, and the token is never returned to the page |
 
-Keychain writes use native security APIs. Reads use the `/usr/bin/security` helper with service/account identifiers, not secret values, in its arguments. Configuration references the helper rather than embedding the key. Existing configuration and byte-exact backups may still contain pre-existing secrets: protect them accordingly.
+Keychain writes use native security APIs. Reads use the `/usr/bin/security` helper with service/account identifiers. The desktop app also needs `experimental_bearer_token` on the current provider, so confirming an apply writes the key into `config.toml`. Treat the configuration and backups as secret files.
 
 WeSwitch makes only two kinds of outbound request, each confirmed by you individually: the model list request (`GET <base>/models`, sent to **the provider you entered**) and the usage query (sent to **chatgpt.com** with the local ChatGPT login token). The usage query is the only operation that sends that token to an external address, and it happens once, only after you click and accept the confirmation dialog. When it fails, the error body is not read, so the token cannot leak through a log or the UI.
 

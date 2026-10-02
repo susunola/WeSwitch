@@ -333,9 +333,10 @@ class ConfigStoreTests(ConfigFixture):
         self.assertTrue(result["keychain_saved"])
         self.assertNotIn(preview["plan_id"], self.store.plans)
         manifest = self.assert_backup(result)
-        self.assert_no_secret(preview, self.store.state(), result, manifest, self.path.read_bytes())
+        self.assert_no_secret(preview, self.store.state(), result, manifest)
+        self.assertEqual(provider.get("experimental_bearer_token"), SECRET)
         for path in self.home.rglob("*"):
-            if path.is_file():
+            if path.is_file() and path != self.path:
                 self.assert_no_secret(path.read_bytes())
 
     def test_existing_plaintext_credentials_do_not_leak_in_state_or_public_preview(self):

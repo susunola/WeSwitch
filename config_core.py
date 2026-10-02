@@ -984,6 +984,7 @@ class ConfigStore:
                 if self.path.read_bytes() != plan["rendered"]:
                     raise ConfigError("写入后文件再次发生变化。请检查备份与配置，不要继续重复应用。", "conflict", 409)
                 manifest["applied"] = True
+                manifest["after_sha256"] = digest(plan["rendered"])
                 # The config is already committed; manifest failure must not pretend the apply failed.
                 try:
                     atomic_write(backup / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode())

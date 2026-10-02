@@ -214,7 +214,6 @@
     '填写配置': 'Enter details',
     '预览与确认': 'Preview & confirm',
     '应用后重启': 'Apply & restart',
-    '提供方配置': 'Provider configuration',
     '先预览 · 后写入': 'Preview before saving',
     '模型提供方与认证设置': 'Model provider and authentication settings',
     '提供方名称': 'Provider name',

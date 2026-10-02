@@ -56,6 +56,11 @@ def digest(data):
 
 
 def atomic_write(path, data, mode=0o600):
+    path = Path(path)
+    # os.replace replaces a symlink node, but a symlinked parent would make the
+    # temporary file land outside the directory the caller checked.
+    if path.is_symlink() or path.parent.is_symlink():
+        raise OSError(f"refusing to write through a symlink: {path}")
     fd, name = tempfile.mkstemp(prefix=".codex-ui-", dir=path.parent)
     try:
         os.fchmod(fd, mode)
@@ -411,6 +416,7 @@ class ConfigStore:
     def preview(self, payload):
         f = normalize(payload)
         # Imported here: model_catalog reads the effort list from this module.
+        from model_catalog import cache_plan
         from model_catalog import load_catalog as catalog_load
         from model_catalog import plan as catalog_plan
         from model_catalog import preview_text as catalog_preview_text
@@ -505,6 +511,13 @@ class ConfigStore:
                 warnings.append("目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。")
                 if catalog_write["skipped"]:
                     warnings.append(f"这些模型 ID 已在目录中，保留原有条目：{'、'.join(catalog_write['skipped'])}")
+                seed_models = json.loads(catalog_write["rendered"].decode("utf-8")).get("models", [])
+                catalog_write["cache"] = cache_plan(self.home, catalog_write["entries"], seed_models)
+                cache = catalog_write["cache"]
+                catalog_changes.append(
+                    f"同步桌面选择器缓存：{cache['path']}，新增 {len(cache['added'])} 个模型")
+                warnings.append(
+                    "登录后的桌面选择器渲染的是 models_cache.json，不只是 models.json。已刷新缓存时间，避免立刻被远程推荐集覆盖。请完全退出 Codex（⌘Q）后再看下拉；若之后远程目录刷新盖掉缓存，重新应用一次即可。")
             elif missing:
                 warnings.append(
                     f"这些模型不在现有本地目录中：{'、'.join(missing)}"
@@ -571,14 +584,13 @@ class ConfigStore:
             if f["write_catalog"]:
                 for target in (doc, snippet):
                     target["model_catalog_json"] = catalog_write["path"]
-                if isinstance(data.get("desktop"), dict):
-                    doc["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
-                    if "desktop" not in snippet:
-                        snippet["desktop"] = tomlkit.table()
-                    snippet["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
-                    changes.append("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。")
-                else:
-                    warnings.append("配置中没有 [desktop] 表，未写入推理强度列表；若桌面端隐藏了所选强度，请手动添加。")
+                if "desktop" not in doc:
+                    doc["desktop"] = tomlkit.table()
+                doc["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
+                if "desktop" not in snippet:
+                    snippet["desktop"] = tomlkit.table()
+                snippet["desktop"]["enabled-reasoning-efforts"] = list(REASONING_EFFORTS)
+                changes.append("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。")
             if f["force_api_login"]:
                 for target in (doc, snippet):
                     target["preferred_auth_method"] = "apikey"
@@ -646,6 +658,8 @@ class ConfigStore:
                     desktop = d.get("desktop")
                     if isinstance(desktop, dict):
                         desktop.pop("enabled-reasoning-efforts", None)
+                        if not desktop:
+                            d.pop("desktop", None)
                 if f["force_api_login"]:
                     for key in ("preferred_auth_method", "forced_login_method"):
                         d.pop(key, None)
@@ -668,6 +682,8 @@ class ConfigStore:
                     "added": catalog_write["added"], "skipped": catalog_write["skipped"],
                     "count": catalog_write["count"], "source_count": catalog_write["source_count"],
                     "preview": catalog_preview_text(catalog_write["entries"]),
+                    "cache_path": catalog_write["cache"]["path"],
+                    "cache_added": catalog_write["cache"]["added"],
                 }
             self.plans = {k: v for k, v in self.plans.items() if time.monotonic() - v["created"] < 900}
             if len(self.plans) >= 100:
@@ -782,12 +798,54 @@ class ConfigStore:
             catalog_manifest = manifest.get("catalog")
             catalog_restored = False
             if isinstance(catalog_manifest, dict) and catalog_manifest.get("backups"):
-                source = catalog_manifest["backups"][0]
-                saved = backup / source
-                target = Path(catalog_manifest.get("path", ""))
-                if saved.is_file() and not saved.is_symlink() and target.parent.is_dir():
-                    atomic_write(target, saved.read_bytes())
-                    catalog_restored = True
+                entries = catalog_manifest["backups"]
+                # Older backups stored bare filenames and restored the first one
+                # onto the new catalog path. Keep that readable, but never follow
+                # a path outside this Codex home.
+                if entries and isinstance(entries[0], str):
+                    entries = [{"name": entries[0], "path": catalog_manifest.get("path", "")}]
+                home = self.home.resolve()
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name")
+                    raw_target = item.get("path", "")
+                    if not isinstance(name, str) or not isinstance(raw_target, str) or not raw_target:
+                        continue
+                    target = Path(raw_target)
+                    if target.is_symlink() or target.parent.is_symlink():
+                        continue
+                    try:
+                        resolved = target.resolve() if target.exists() else target.parent.resolve() / target.name
+                    except OSError:
+                        continue
+                    if resolved != home and home not in resolved.parents:
+                        continue
+                    saved = backup / name
+                    if saved.is_file() and not saved.is_symlink() and saved.parent == backup:
+                        atomic_write(target, saved.read_bytes())
+                        catalog_restored = True
+                created = Path(catalog_manifest.get("path", ""))
+                if catalog_manifest.get("before_sha256") is None and created.is_file() and not created.is_symlink():
+                    try:
+                        resolved = created.resolve()
+                    except OSError:
+                        resolved = None
+                    if resolved is not None and (resolved == home or home in resolved.parents):
+                        created.unlink()
+                        catalog_restored = True
+            cache_manifest = catalog_manifest.get("cache") if isinstance(catalog_manifest, dict) else None
+            if isinstance(cache_manifest, dict):
+                target = Path(cache_manifest.get("path", ""))
+                expected = self.home / "models_cache.json"
+                if target == expected and not target.is_symlink():
+                    backup_name = cache_manifest.get("backup")
+                    if cache_manifest.get("existed") and isinstance(backup_name, str):
+                        saved = backup / backup_name
+                        if saved.is_file() and not saved.is_symlink() and saved.parent == backup:
+                            atomic_write(target, saved.read_bytes())
+                    elif not cache_manifest.get("existed") and target.is_file() and not target.is_symlink():
+                        target.unlink()
             atomic_write(self.path, stored)
             if self.path.read_bytes() != stored:
                 raise ConfigError("还原后文件再次发生变化，请检查备份目录，不要重复还原。", "conflict", 409)
@@ -862,13 +920,27 @@ class ConfigStore:
                         seen.add(resolved)
                         shutil.copy2(p, backup / name, follow_symlinks=False)
                         os.chmod(backup / name, 0o600)
-                        catalog_backups.append(name)
+                        catalog_backups.append({"name": name, "path": str(p)})
+                    cache = catalog.get("cache") or {}
+                    cache_backup = None
+                    cache_path = Path(cache.get("path", ""))
+                    if cache.get("existed") and cache_path.is_file() and not cache_path.is_symlink():
+                        shutil.copy2(cache_path, backup / "models-cache.json", follow_symlinks=False)
+                        os.chmod(backup / "models-cache.json", 0o600)
+                        cache_backup = "models-cache.json"
                     catalog_manifest = {
                         "path": catalog["path"], "source_path": catalog["source_path"],
                         "added": catalog["added"], "skipped": catalog["skipped"],
                         "backups": catalog_backups,
                         "before_sha256": digest(Path(catalog["path"]).read_bytes()) if Path(catalog["path"]).is_file() else None,
                         "after_sha256": digest(catalog["rendered"]),
+                        "cache": {
+                            "path": cache.get("path", ""),
+                            "backup": cache_backup,
+                            "existed": bool(cache.get("existed")),
+                            "before_sha256": digest(cache_path.read_bytes()) if cache_backup else None,
+                            "after_sha256": digest(cache["rendered"]) if cache.get("rendered") else None,
+                        },
                     }
                 manifest = {
                     "created": datetime.now(timezone.utc).isoformat(), "config_path": str(self.path),
@@ -890,6 +962,10 @@ class ConfigStore:
                         # Written first: if the config write then fails, config.toml
                         # still points at the previous catalog, so nothing changes.
                         atomic_write(Path(catalog["path"]), catalog["rendered"])
+                        cache = catalog.get("cache") or {}
+                        cache_path = Path(cache.get("path", ""))
+                        if cache.get("rendered") and not cache_path.is_symlink():
+                            atomic_write(cache_path, cache["rendered"])
                     atomic_write(self.path, plan["rendered"])
                 except KeychainError as e:
                     raise ConfigError(str(e), "keychain_failed") from None

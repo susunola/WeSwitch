@@ -23,7 +23,7 @@ from model_discovery import discover_models
 from backend_i18n import translate_response, _EXACT_TRANSLATIONS, _TEMPLATES
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-VERSION = "0.6.3"
+VERSION = "0.6.4"
 MAX_BODY = 65536
 
 
@@ -57,7 +57,7 @@ class LocalServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "WeSwitch/0.6.3"
+    server_version = "WeSwitch/0.6.4"
     sys_version = ""
 
     def log_message(self, *_):

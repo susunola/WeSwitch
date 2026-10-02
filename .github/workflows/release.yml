@@ -93,19 +93,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64
-          path: release-assets
-      # The notes live in the repository, not inline in this file. An inline
-      # `--notes` block silently ships the *previous* release's text, because a
-      # workflow file only changes when someone remembers to edit it. Reading
-      # docs/release-notes/<tag>.md from the default branch means the notes are
-      # authored alongside the release and can be corrected by a re-run.
+      # Checkout first. checkout cleans the workspace, so downloading the
+      # archive before this step deletes it and the publish step has no directory.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: WeSwitch-${{ needs.prepare.outputs.tag }}-macos-arm64
+          path: release-assets
       - name: Verify artifacts and publish the existing tag
         working-directory: release-assets
         env:

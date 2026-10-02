@@ -34,6 +34,7 @@
     '默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。': 'Off by default, so the official login in auth.json is kept. Turning it on makes the desktop app use API-key login, and official chats are hidden until you switch back.',
     '删除所选自定义模型，默认 GPT 模型不会受影响': 'Remove the selected custom models. Default GPT models are not affected',
     '已从目录删除所选模型': 'Removed the selected models from the catalog',
+    '无认证模式没有可用于登录的凭据，因此不写入登录方式。': 'No-auth mode has no credential to log in with, so no login method is written.',
     '删除自定义模型': 'Remove custom models',
     '只删除本工具添加的模型。默认 GPT 模型不会出现在这里，也不会被删除。': 'Only models added by this tool can be removed. Default GPT models are not listed and are not deleted.',
     '从模型目录和选择器缓存移除所选条目。': 'Remove the selected entries from the catalog and the picker cache.',

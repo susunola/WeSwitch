@@ -28,6 +28,10 @@ PROFILE_KEYS = ("model", "model_provider", "model_reasoning_effort")
 # The only wire protocol Codex accepts. `wire_api = "chat"` was removed from
 # codex-cli, so there is no protocol to choose; only base_url may differ.
 WIRE_API = "responses"
+# Where the desktop app installs, in the order to check. Shared so the binary
+# lookup and the version panel can never drift apart.
+APP_CANDIDATES = (Path("/Applications/Codex.app"), Path("/Applications/ChatGPT.app"),
+                  Path.home() / "Applications/Codex.app")
 # Evidence: the codex-cli 0.159.2 binary serializes its reasoning-effort enum as
 # none/minimal/low/medium/high/xhigh/max/ultra/persistent, in that order. Anything
 # outside this set is rejected by Codex before it ever reaches the provider.
@@ -233,6 +237,9 @@ class ConfigStore:
         self.keychain = keychain if keychain is not None else Keychain()
         self.demo = demo
         self.plans = {}
+        # The built-in model list only needs to be read once per process; the
+        # bundled-catalog fallback costs one Codex CLI call and `state()` polls.
+        self.seed_cache = None
         self.lock = threading.RLock()
 
     def snapshot(self):
@@ -254,7 +261,7 @@ class ConfigStore:
             raise ConfigError("现有 config.toml 不是有效 UTF-8 TOML。未做修改，请先修复原文件。") from None
 
     def app_info(self):
-        for app in (Path("/Applications/Codex.app"), Path("/Applications/ChatGPT.app"), Path.home() / "Applications/Codex.app"):
+        for app in APP_CANDIDATES:
             info = app / "Contents/Info.plist"
             if info.is_file():
                 try:
@@ -265,6 +272,35 @@ class ConfigStore:
                 except (ValueError, OSError):
                     continue
         return {"path": None, "version": None, "cli_version": None}
+
+    def codex_binary(self):
+        """Absolute path to the Codex CLI inside the installed app, or None.
+
+        Only ever asked about the shape of a model catalog and whether it parses.
+        Every caller must tolerate None: the tool stays fully usable, just
+        unverified, when Codex is not installed on this machine.
+        """
+        for app in APP_CANDIDATES:
+            base = app / "Contents/Resources/codex-cli"
+            for rel in ("CodexCLI.app/Contents/MacOS/codex", "bin/codex"):
+                candidate = base / rel
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    return str(candidate)
+        return shutil.which("codex")
+
+    def builtin_catalog(self):
+        """The built-in models the picker shows now, for seeding a first catalog.
+
+        Seeding from this list is what makes a catalog safe to create at all: the
+        merge starts from every model the user already has, so writing the file
+        cannot make the official models disappear.
+        """
+        with self.lock:
+            if self.seed_cache is None:
+                from model_catalog import read_seed
+                entries, origin = read_seed(self.home, self.codex_binary())
+                self.seed_cache = {"origin": origin, "count": len(entries), "entries": entries}
+            return self.seed_cache
 
     def catalog_path(self, data):
         """Resolve `model_catalog_json` to an absolute path, or None when unset.
@@ -296,8 +332,13 @@ class ConfigStore:
 
     def catalog_info(self, data):
         raw = data.get("model_catalog_json")
+        # `builtin` says whether a first catalog can be created safely at all: the
+        # UI only offers the merge when there is either an existing file to merge
+        # into, or a built-in list to seed one from.
+        seed = self.builtin_catalog()
         result = {"path": raw if isinstance(raw, str) else None, "count": 0, "preserved": True,
-                  "source": self.catalog_source(data)}
+                  "source": self.catalog_source(data),
+                  "builtin": {"origin": seed["origin"], "count": seed["count"]}}
         slugs = []
         p = self.catalog_path(data)
         if p is not None:
@@ -370,8 +411,11 @@ class ConfigStore:
     def preview(self, payload):
         f = normalize(payload)
         # Imported here: model_catalog reads the effort list from this module.
+        from model_catalog import load_catalog as catalog_load
         from model_catalog import plan as catalog_plan
         from model_catalog import preview_text as catalog_preview_text
+        from model_catalog import render as catalog_render
+        from model_catalog import validate as catalog_validate
         with self.lock:
             raw, revision, data, doc = self.snapshot()
             provider_id = f["provider_id"]
@@ -406,7 +450,7 @@ class ConfigStore:
                 warnings.append("环境变量必须在桌面应用进程中可见；本工具不写 shell 配置，也不注入 Dock 环境。")
             else:
                 warnings.append("无密钥模式只适用于本机无需认证的服务。")
-            catalog, slugs = self.catalog_info(data)
+            catalog_state, slugs = self.catalog_info(data)
             missing = [m for m in f["models"] if m not in slugs]
             catalog_write = None
             catalog_changes = []
@@ -414,18 +458,50 @@ class ConfigStore:
                 # Same resolution as catalog_source(), so the checkbox can never
                 # promise a merge the preview then refuses.
                 source = self.catalog_source(data)
-                if source is None:
-                    raise ConfigError("未找到现有模型目录：model_catalog_json 未设置或无法读取。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。", "catalog_unavailable")
-                catalog_write = catalog_plan(self.home, source, f["models"], f["name"], f["reasoning_effort"])
+                seed = self.builtin_catalog()
+                if source:
+                    source_entries, _ = catalog_load(source)
+                else:
+                    # No catalog yet. Start from the built-in list so the file we
+                    # create still holds every model the picker has today; merging
+                    # into nothing is what would hide the official models.
+                    source_entries = seed["entries"]
+                if not source_entries:
+                    raise ConfigError("未找到现有模型目录：model_catalog_json 未设置，也读不到 Codex 内置模型列表。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。", "catalog_unavailable")
+                catalog_write = catalog_plan(self.home, source_entries, f["models"], f["name"],
+                                             f["reasoning_effort"], source_path=source or "",
+                                             seed_entries=seed["entries"])
                 if not catalog_write["source_count"]:
                     # Merging from an empty source would hide every built-in model.
                     raise ConfigError("现有模型目录为空或无法解析，为保证官方模型仍可选，未生成新目录。", "catalog_unavailable")
+                # Ask Codex itself, in a throwaway CODEX_HOME, whether it accepts
+                # the file. A rejected catalog costs every model in the picker,
+                # not just the custom one, so this runs before anything is saved.
+                rejected = catalog_validate(catalog_write["rendered"], self.codex_binary())
+                if rejected:
+                    # Codex may be rejecting an entry that was already in the user's
+                    # own catalog, not the one just built. Asking about the source on
+                    # its own turns "your catalog is broken" into an actionable
+                    # message instead of a raw parser error naming a field the user
+                    # never wrote.
+                    if source and catalog_validate(catalog_render({"models": source_entries}),
+                                                   self.codex_binary()):
+                        raise ConfigError(f"现有模型目录本身就无法被 Codex 解析，未生成任何文件：{rejected}",
+                                          "catalog_rejected")
+                    raise ConfigError(f"Codex 拒绝这份模型目录，未生成任何文件：{rejected}", "catalog_rejected")
                 catalog_changes = [
                     f"写入模型目录：{catalog_write['path']}",
                     f"合并现有目录 {catalog_write['source_count']} 条记录，新增 {len(catalog_write['added'])} 个模型条目",
                     "设置 model_catalog_json 指向新目录文件；原目录文件已备份。",
                 ]
-                warnings.append("目录写入后，桌面端选择器改用这个文件；Codex 之后的远程目录更新不会再生效。把 model_catalog_json 改回原路径即可恢复。")
+                if source is None:
+                    catalog_changes.append(
+                        "本机原先没有模型目录；底稿取自本机缓存的模型列表 models_cache.json。"
+                        if seed["origin"] == "cache" else
+                        "本机原先没有模型目录；底稿取自 Codex 内置模型目录 codex debug models --bundled。")
+                    warnings.append("目录写入后，桌面端选择器只读取这个文件；Codex 之后的远程目录更新不会自动生效。重新运行本工具会用当时的内置列表重建底稿。")
+                else:
+                    warnings.append("目录写入后，桌面端选择器改用这个文件；Codex 之后的远程目录更新不会再生效。把 model_catalog_json 改回原路径即可恢复。")
                 warnings.append("目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。")
                 if catalog_write["skipped"]:
                     warnings.append(f"这些模型 ID 已在目录中，保留原有条目：{'、'.join(catalog_write['skipped'])}")

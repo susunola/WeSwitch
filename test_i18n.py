@@ -142,6 +142,27 @@ DYNAMIC_CASES = {
         ("写入模型目录：/Users/me/.codex/models.json",
          "Write the model catalog: /Users/me/.codex/models.json"),
     ),
+    "Codex 拒绝这份模型目录，未生成任何文件：{}": (
+        (
+            "Codex 拒绝这份模型目录，未生成任何文件：Error: failed to parse "
+            "model_catalog_json path `/tmp/candidate.json` as JSON: "
+            "missing field `support_verbosity` at line 3 column 5",
+            "Codex rejected this model catalog, so no file was written: Error: failed to "
+            "parse model_catalog_json path `/tmp/candidate.json` as JSON: "
+            "missing field `support_verbosity` at line 3 column 5",
+        ),
+    ),
+    "现有模型目录本身就无法被 Codex 解析，未生成任何文件：{}": (
+        (
+            "现有模型目录本身就无法被 Codex 解析，未生成任何文件：Error: failed to parse "
+            "model_catalog_json path `/tmp/candidate.json` as JSON: "
+            "missing field `supported_reasoning_levels` at line 6 column 5",
+            "The existing model catalog itself cannot be parsed by Codex, so no file was "
+            "written: Error: failed to parse model_catalog_json path "
+            "`/tmp/candidate.json` as JSON: missing field "
+            "`supported_reasoning_levels` at line 6 column 5",
+        ),
+    ),
     "合并现有目录 {} 条记录，新增 {} 个模型条目": (
         ("合并现有目录 8 条记录，新增 2 个模型条目",
          "Merge 8 entries from the existing catalog and add 2 model entries"),

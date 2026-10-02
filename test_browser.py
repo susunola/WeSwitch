@@ -29,6 +29,31 @@ FAILURES = []
 ACCOUNT_ID = "acct-browser-test"
 USAGE_PATH = "/backend-api/wham/usage/plan_limit_history"
 
+# The catalog entry the demo home starts from. It carries every field Codex refuses
+# to parse a catalog without, so the fixture behaves like a real installation: a
+# file missing one of these is rejected outright and could not be in use.
+OFFICIAL_ENTRY = {
+    "slug": "official-one",
+    "display_name": "Official One",
+    "description": "Built-in model.",
+    "default_reasoning_level": "low",
+    "supported_reasoning_levels": [
+        {"effort": "low", "description": "Fast responses"},
+        {"effort": "medium", "description": "Balanced reasoning"},
+        {"effort": "high", "description": "Deeper reasoning"},
+    ],
+    "shell_type": "unified_exec",
+    # `hide` on purpose: the installed-models list marks a non-list entry as hidden,
+    # and the bundled catalog ships hidden entries the same way.
+    "visibility": "hide",
+    "supported_in_api": True,
+    "priority": 1,
+    "support_verbosity": True,
+    "truncation_policy": {"mode": "tokens", "limit": 10000},
+    "experimental_supported_tools": ["clock"],
+    "base_instructions": "You are a coding agent.",
+}
+
 
 def _segment(payload):
     return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
@@ -223,9 +248,10 @@ def main():
                    b'[desktop]\nenabled-reasoning-efforts = ["medium", "high"]\n')
         config = home / "config.toml"
         config.write_bytes(initial)
-        # A real catalog, so the merge path is exercised instead of skipped.
-        (home / "model_catalog.json").write_bytes(json.dumps(
-            {"models": [{"slug": "official-one", "display_name": "Official One"}]}).encode())
+        # A real catalog, so the merge path is exercised instead of skipped. The
+        # entry carries every field Codex requires, because a catalog missing one is
+        # rejected outright and no real installation can be running one.
+        (home / "model_catalog.json").write_bytes(json.dumps({"models": [OFFICIAL_ENTRY]}).encode())
         # A real ChatGPT login, so the plan and model facts are exercised without
         # any network access at all.
         (home / "auth.json").write_text(json.dumps({
@@ -236,6 +262,10 @@ def main():
         store = ConfigStore(home, keychain=FakeKeychain(), demo=True)
         # Do not read metadata from a real installed application, even for screenshots.
         store.app_info = lambda: {"path": str(home / "TEST-ONLY-Codex.app"), "version": "TEST ONLY", "cli_version": "TEST ONLY"}
+        # Nor shell out to whatever Codex is installed here. The pre-write catalog
+        # validation is covered by test_config.py against a stub CLI; leaving it live
+        # would make this suite pass or fail depending on the host's Codex build.
+        store.codex_binary = lambda: None
         server = LocalServer(("127.0.0.1", 0), store)
         gate = threading.Event()
 
@@ -734,7 +764,7 @@ def main():
                 expect(restored.get("ok") is True and restored.get("catalog_restored") is True,
                        "Restore reports the catalog was rolled back too", restored)
                 expect(config.read_bytes() == initial, "Restore returns the original configuration byte-exactly")
-                expect(json.loads((home / "models.json").read_bytes())["models"] == [{"slug": "official-one", "display_name": "Official One"}],
+                expect(json.loads((home / "models.json").read_bytes())["models"] == [OFFICIAL_ENTRY],
                        "Restore returns the original catalog")
                 safety = list((home / "model-ui-backups").glob("*/config.toml"))
                 expect(len(safety) == 2 and applied_backup in {p.parent.name for p in safety},

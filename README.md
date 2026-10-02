@@ -26,10 +26,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.6.0-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.6.1-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.6.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.6.1-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -79,7 +79,11 @@ The connection test sends that request and inspects the reply: a `response` obje
 
 ## Model catalog and rollback
 
-**Catalog:** when "write model catalog" is enabled, WeSwitch **merges** the existing entries with your new models into `~/.codex/models.json` (the original is always backed up first) and points `model_catalog_json` at it. Without both of those, the picker falls back to its default recommended set. Catalog entries only decide the desktop display name and reasoning options; requests still use the model ID and base URL you entered. After the write, Codex's remote catalog updates no longer apply — point `model_catalog_json` back at the original path to restore that. The option is not offered when no existing catalog can be found: a catalog holding only custom models would hide the built-in models in the picker.
+**Catalog:** when "write model catalog" is enabled, WeSwitch **merges** the existing entries with your new models into `~/.codex/models.json` (the original is always backed up first) and points `model_catalog_json` at it. Without both of those, the picker falls back to its default recommended set. When no catalog exists yet, the merge starts from the models Codex already has — the local `models_cache.json`, or the catalog inside the installed Codex build (`codex debug models --bundled`) — so creating one can never hide the built-in models. Only when neither can be read is the option not offered at all.
+
+Each generated entry carries the fields Codex requires and nothing more. Fields that describe the source model's own capability — context window, service tiers, speed tiers, tool mode — are deliberately **not** copied, because they describe a different model. Before anything is written, the candidate file is parsed back by the installed Codex in a throwaway `CODEX_HOME`; if Codex would reject it, nothing is written and Codex's own error is shown. This matters because Codex rejects the **entire file** when a single entry is malformed, which would cost every model in the picker rather than just the custom one.
+
+Catalog entries only decide the desktop display name and reasoning options; requests still use the model ID and base URL you entered. After the write, Codex's remote catalog updates no longer apply — point `model_catalog_json` back at the original path to restore that.
 
 **Rollback:** every applied backup under `~/.codex/model-ui-backups/` can be restored from the UI, and the current configuration is saved as another backup first. A restore only overwrites files this tool wrote (the configuration, and the catalog file written by that apply); it never deletes Keychain items.
 
@@ -129,9 +133,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.6.0
+.venv/bin/python scripts/build_macos.py --version v0.6.1
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.6.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.6.1 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -139,7 +143,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.1
 ```
 
 ## License

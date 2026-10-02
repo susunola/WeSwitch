@@ -332,7 +332,8 @@
     // Model catalog and API-key login switches.
     '写入模型目录': 'Write model catalog',
     '桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。': 'The desktop picker renders catalog entries only; without this, your models never appear in its list. When checked, they are merged into ~/.codex/models.json and the existing catalog is backed up first.',
-    '本机没有找到现有模型目录（model_catalog_json 未设置，也没有 models.json）。为避免官方模型从选择器中消失，本工具不新建只含自定义模型的目录。': 'No existing model catalog was found (model_catalog_json is unset and there is no models.json). To avoid making the built-in models disappear from the picker, this tool does not create a catalog holding only custom models.',
+    '本机没有找到现有模型目录，也读不到 Codex 内置模型列表。为避免官方模型从选择器中消失，本工具不新建只含自定义模型的目录。': 'No existing model catalog was found, and Codex\'s built-in model list could not be read either. To avoid making the built-in models disappear from the picker, this tool does not create a catalog holding only custom models.',
+    '本机还没有模型目录。勾选后会先用 Codex 内置模型列表作底稿，再合并你的模型；官方模型不会消失。': 'This machine has no model catalog yet. When checked, the merge starts from Codex\'s built-in model list and then adds your models, so the built-in models do not disappear.',
     '强制 API Key 登录': 'Force API key login',
     '写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。': 'Writes preferred_auth_method and forced_login_method. Conversation history under your ChatGPT account becomes temporarily invisible; reverting restores it.',
     '无认证模式没有可用于登录的凭据，因此不写入登录方式。': 'No-authentication mode has no credential to log in with, so no login method is written.',

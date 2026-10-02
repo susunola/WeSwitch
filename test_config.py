@@ -15,6 +15,7 @@ import tempfile
 import threading
 import tomllib
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -28,6 +29,33 @@ import server as server_module
 SECRET = "sk-regression-only-DO-NOT-LEAK-8d97af"
 TOKEN = "regression-session-token-not-a-real-credential"
 CATALOG = b'{\n  "models": [{"slug": "original-model", "extra": [1, 2]}],\n  "keep": "exact spacing"\n}\n'
+# A realistic Codex entry, in the shape the server-fetched cache holds. The
+# structural fields are the ones Codex refuses to parse a catalog without; the
+# capability fields are the ones a merge must never inherit.
+REAL_ENTRY = {
+    "slug": "gpt-builtin",
+    "display_name": "GPT-Builtin",
+    "description": "Built-in model for coding and everyday work.",
+    "default_reasoning_level": "low",
+    "supported_reasoning_levels": [
+        {"effort": "low", "description": "Fast responses with lighter reasoning"},
+        {"effort": "medium", "description": "Balanced reasoning"},
+        {"effort": "high", "description": "Deeper reasoning"},
+    ],
+    "shell_type": "unified_exec",
+    "visibility": "list",
+    "supported_in_api": True,
+    "priority": 1,
+    "additional_speed_tiers": ["fast"],
+    "service_tiers": [{"id": "priority", "name": "Fast", "description": "2x speed"}],
+    "truncation_policy": {"mode": "tokens", "limit": 10000},
+    "support_verbosity": True,
+    "default_verbosity": "low",
+    "context_window": 272000,
+    "max_context_window": 872000,
+    "experimental_supported_tools": ["send_user_message_async", "clock"],
+    "model_messages": {"instructions_template": "Instructions for the built-in model."},
+}
 ORIGINAL = b'''# User configuration: preserve this exact comment.
 model = "original-model" # Original default model comment.
 model_provider = "keep-provider"
@@ -127,6 +155,12 @@ class ConfigFixture(unittest.TestCase):
         })
         app.start()
         self.addCleanup(app.stop)
+        # Tests must never run the Codex CLI that happens to be installed on the
+        # machine running them: the result would depend on the host, and the
+        # built-in model list would leak in as a merge source.
+        binary = mock.patch.object(core.ConfigStore, "codex_binary", return_value=None)
+        binary.start()
+        self.addCleanup(binary.stop)
         self.store = core.ConfigStore(self.home, keychain=self.fake)
 
     def tearDown(self):
@@ -851,11 +885,15 @@ requires_openai_auth = true # Preserve the existing OpenAI authentication.
         self.assertNotIn("model_catalog_json", tomllib.loads(self.path.read_text()))
         before = self.tree_snapshot()
         state = self.store.state()
-        self.assertEqual(state["catalog"], {"path": None, "count": 0, "preserved": True, "source": None})
+        self.assertEqual(state["catalog"], {"path": None, "count": 0, "preserved": True, "source": None,
+                                            "builtin": {"origin": "", "count": 0}})
         self.assertIsNone(json.loads(json.dumps(state))["catalog"]["path"])
         # No model_catalog_json and no models.json: the merge source is absent, so the
         # UI must not offer "write model catalog" rather than hide the built-in models.
         self.assertIsNone(state["catalog"]["source"])
+        # With no Codex install to read a built-in list from, there is nothing to
+        # seed a first catalog with, and the option stays unavailable.
+        self.assertEqual(state["catalog"]["builtin"]["count"], 0)
         self.assertEqual(state["current"]["model"], "original-model")
         self.assertEqual(state["revision"], hashlib.sha256(original).hexdigest())
         form = self.form()
@@ -1266,6 +1304,163 @@ class HTTPTests(ConfigFixture):
 
 class CatalogTests(ConfigFixture):
     """Merging into `model_catalog_json`, the file the desktop picker renders."""
+
+    def without_catalog_setting(self):
+        """Drop `model_catalog_json`, the state a machine that never ran this has."""
+        self.path.write_bytes(b"".join(line for line in ORIGINAL.splitlines(keepends=True)
+                                       if not line.startswith(b"model_catalog_json =")))
+
+    def write_cache(self, entries=None):
+        """Write the server-fetched cache the signed-in picker renders from."""
+        cache = self.home / "models_cache.json"
+        cache.write_bytes(json.dumps(
+            {"fetched_at": "2026-10-02T04:02:31.668714Z", "etag": 'W/"666d7451"',
+             "client_version": "0.159.2", "identity": "c1cee00a",
+             "models": [REAL_ENTRY] if entries is None else entries}, indent=2).encode())
+        return cache
+
+    @contextmanager
+    def fake_codex(self, bundled=(), reject=None, reject_if=None):
+        """Install a stub Codex CLI and point the store at it, without a real one.
+
+        Goes through the real subprocess path, so the bundled-catalog fallback and
+        the pre-write validation are both exercised for real, but the outcome does
+        not depend on the Codex build installed on the machine running the tests.
+        `reject_if` narrows the failure to candidates containing that text, which is
+        what separates "this tool built a bad entry" from "the catalog the user
+        already had is unusable".
+        """
+        script = self.root / "fake-codex"
+        # The payload is embedded as a JSON *string* and parsed by the stub: JSON
+        # true/false/null are not Python literals, so inlining the text would not run.
+        bundled_json = json.dumps({"models": list(bundled)})
+        body = "\n".join([
+            "import json, sys",
+            f"BUNDLED = json.loads({json.dumps(bundled_json)})",
+            f"REJECT = {reject!r}",
+            f"REJECT_IF = {reject_if!r}",
+            "args = sys.argv[1:]",
+            "if args[:3] == ['debug', 'models', '--bundled']:",
+            "    print(json.dumps(BUNDLED)); raise SystemExit(0)",
+            "override = args[1] if len(args) > 1 else ''",
+            "path = override.split('=', 1)[1].strip('\"') if '=' in override else ''",
+            "body = open(path, encoding='utf-8').read() if path else ''",
+            "if REJECT is not None and (REJECT_IF is None or REJECT_IF in body):",
+            "    sys.stderr.write(REJECT); raise SystemExit(1)",
+            "print(json.dumps(BUNDLED)); raise SystemExit(0)",
+        ])
+        script.write_text(f"#!{sys.executable}\n{body}\n")
+        script.chmod(0o755)
+        with mock.patch.object(core.ConfigStore, "codex_binary", return_value=str(script)):
+            yield script
+
+    def merged_entry(self):
+        return json.loads((self.home / "models.json").read_bytes())["models"][-1]
+
+    def test_generated_entry_carries_every_field_codex_requires(self):
+        # Codex refuses the whole catalog when one entry omits a required field,
+        # which costs every model in the picker rather than just the custom one.
+        self.commit(self.form(write_catalog=True))
+        entry = self.merged_entry()
+        for key in ("slug", "display_name", "description", "visibility", "supported_in_api",
+                    "priority", "supported_reasoning_levels", "shell_type", "support_verbosity",
+                    "truncation_policy", "experimental_supported_tools", "base_instructions"):
+            with self.subTest(field=key):
+                self.assertIn(key, entry)
+        self.assertEqual(entry["slug"], "new-model")
+        self.assertEqual(entry["display_name"], "new-model")
+        self.assertEqual(entry["visibility"], "list")
+        self.assertTrue(entry["supported_in_api"])
+        # Instructions are present but empty: a system prompt written for a
+        # different model would misdescribe this one.
+        self.assertEqual(entry["base_instructions"], "")
+
+    def test_generated_entry_borrows_codex_structure_but_no_model_capability(self):
+        self.without_catalog_setting()
+        self.write_cache()
+        self.commit(self.form(write_catalog=True))
+        entry = self.merged_entry()
+        # Structural values come from the real entry in the user's own list, so
+        # their accepted values track the installed Codex build.
+        self.assertEqual(entry["shell_type"], REAL_ENTRY["shell_type"])
+        self.assertEqual(entry["truncation_policy"], REAL_ENTRY["truncation_policy"])
+        self.assertEqual(entry["support_verbosity"], REAL_ENTRY["support_verbosity"])
+        self.assertEqual(entry["experimental_supported_tools"], REAL_ENTRY["experimental_supported_tools"])
+        # Instructions are the one thing that is carried over wholesale: Codex
+        # rejects an entry without them, and inventing a prompt here would be
+        # worse than reusing the one already on this machine.
+        self.assertEqual(entry["model_messages"], REAL_ENTRY["model_messages"])
+        self.assertNotIn("base_instructions", entry)
+        # Nothing describing the source model's own capability is inherited: an
+        # inflated context window or a "priority" service tier would be a false
+        # claim about a model this tool has never called.
+        for key in ("context_window", "max_context_window", "service_tiers",
+                    "additional_speed_tiers", "default_verbosity", "tool_mode", "comp_hash"):
+            with self.subTest(field=key):
+                self.assertNotIn(key, entry)
+
+    def test_write_catalog_bootstraps_from_the_cached_model_list_when_none_exists(self):
+        # The reported failure: a machine with no catalog of any kind could not be
+        # written to at all, so the custom model stayed invisible in the picker.
+        self.without_catalog_setting()
+        self.write_cache()
+        preview, result = self.commit(self.form(write_catalog=True))
+        # An empty source_path marks the bootstrap: there was no file to read.
+        self.assertEqual(preview["catalog"]["source_path"], "")
+        self.assertEqual(preview["catalog"]["source_count"], 1)
+        self.assertIn("底稿取自本机缓存的模型列表 models_cache.json。", " ".join(preview["changes"]))
+        self.assertEqual(result["catalog"]["added"], ["new-model"])
+        merged = json.loads((self.home / "models.json").read_bytes())
+        self.assertEqual([m["slug"] for m in merged["models"]], ["gpt-builtin", "new-model"])
+        # The built-in entry survives byte-for-byte, so no official model is lost.
+        self.assertEqual(merged["models"][0], REAL_ENTRY)
+        self.assertEqual(tomllib.loads(self.path.read_text())["model_catalog_json"],
+                         str(self.home / "models.json"))
+
+    def test_write_catalog_bootstraps_from_the_bundled_catalog_without_a_cache(self):
+        # Before the first sign-in there is no cache, so the catalog inside the
+        # installed Codex build is the only list to seed from.
+        self.without_catalog_setting()
+        with self.fake_codex(bundled=[dict(REAL_ENTRY, slug="gpt-bundled")]):
+            preview, _ = self.commit(self.form(write_catalog=True))
+        self.assertEqual(preview["catalog"]["source_count"], 1)
+        self.assertIn("底稿取自 Codex 内置模型目录 codex debug models --bundled。",
+                      " ".join(preview["changes"]))
+        merged = json.loads((self.home / "models.json").read_bytes())
+        self.assertEqual([m["slug"] for m in merged["models"]], ["gpt-bundled", "new-model"])
+
+    def test_write_catalog_is_refused_when_codex_rejects_the_built_entry(self):
+        # The safety net for this whole file: a catalog Codex cannot parse takes
+        # out every model in the picker, so a rejected candidate must never land.
+        with self.fake_codex(reject="Error: failed to parse model_catalog_json path "
+                                    "as JSON: missing field `support_verbosity`",
+                             reject_if="new-model"):
+            error = self.assert_error(lambda: self.store.preview(self.form(write_catalog=True)),
+                                      "catalog_rejected")
+        self.assertIn("Codex 拒绝这份模型目录，未生成任何文件", str(error))
+        self.assertIn("missing field `support_verbosity`", str(error))
+        self.assertFalse((self.home / "models.json").exists())
+
+    def test_write_catalog_blames_the_existing_catalog_when_that_is_what_codex_rejects(self):
+        # A hand-made catalog Codex cannot parse is already unusable, so the message
+        # must say which file is at fault instead of leaving the user to guess that
+        # the entry this tool just built was not the problem.
+        with self.fake_codex(reject="Error: failed to parse model_catalog_json path "
+                                    "as JSON: missing field `supported_reasoning_levels`"):
+            error = self.assert_error(lambda: self.store.preview(self.form(write_catalog=True)),
+                                      "catalog_rejected")
+        self.assertIn("现有模型目录本身就无法被 Codex 解析，未生成任何文件", str(error))
+        self.assertFalse((self.home / "models.json").exists())
+
+    def test_write_catalog_is_still_refused_when_no_built_in_list_can_be_read(self):
+        # No existing catalog and no Codex to ask: there is genuinely nothing to
+        # seed from, and a catalog holding only custom models would hide the rest.
+        self.without_catalog_setting()
+        with self.fake_codex(bundled=[]):
+            error = self.assert_error(lambda: self.store.preview(self.form(write_catalog=True)),
+                                      "catalog_unavailable")
+        self.assertIn("官方模型", str(error))
+        self.assertFalse((self.home / "models.json").exists())
 
     def test_relative_catalog_path_resolves_under_the_codex_home_not_the_working_directory(self):
         # Regression: this fixture declares a relative path. Resolving it against the

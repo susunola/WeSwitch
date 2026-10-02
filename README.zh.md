@@ -26,10 +26,10 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 
 初始二进制发布目标为 **macOS Apple Silicon（arm64）**；CI 构建使用 macOS 14，本地构建已在 macOS 27 验证。其他系统版本尚需实际验证。独立应用内置 Python，不需要安装 Python、Homebrew 或 WorkBuddy。
 
-发布后，下载 `WeSwitch-v0.6.0-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
+发布后，下载 `WeSwitch-v0.6.1-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.6.0-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.6.1-macos-arm64.zip.sha256
 ```
 
 解压后打开 `WeSwitch.app`，默认浏览器会显示本地界面。校验和用于检查文件完整性，不等于发行者身份认证。
@@ -79,7 +79,11 @@ Codex 只有一种线协议：**Responses API**。旧版 `wire_api = "chat"` 已
 
 ## 模型目录与回滚
 
-**模型目录**：勾选「写入模型目录」后，WeSwitch 把现有目录条目与你新增的模型**合并**写入 `~/.codex/models.json`（原目录始终先备份），并把 `model_catalog_json` 指向它。这两件事都不做，选择器就会退回「默认 推荐模型集」。目录条目只决定桌面端的显示名称与推理选项，实际请求仍用你填的模型 ID 和地址。目录写入后 Codex 的远程目录更新不再生效；把 `model_catalog_json` 改回原路径即可恢复。本机找不到现有目录时不提供勾选 —— 只含自定义模型的目录会让官方模型从选择器里消失。
+**模型目录**：勾选「写入模型目录」后，WeSwitch 把现有目录条目与你新增的模型**合并**写入 `~/.codex/models.json`（原目录始终先备份），并把 `model_catalog_json` 指向它。这两件事都不做，选择器就会退回「默认 推荐模型集」。本机还没有目录时，合并会先从 **Codex 已有的模型**起步 —— 本机缓存的 `models_cache.json`，或安装包里自带的目录（`codex debug models --bundled`）—— 因此新建目录绝不会让官方模型消失。只有两者都读不到时，才不提供勾选。
+
+生成的条目只写入 Codex 必需的字段，不多写。描述**源模型自身能力**的字段 —— 上下文窗口、service tier、speed tier、tool mode —— 一律**不**复制，因为它们描述的是另一个模型。写入之前，候选文件会由本机安装的 Codex 在一次性 `CODEX_HOME` 里重新解析一遍；只要 Codex 会拒绝，就一个文件都不写，并把 Codex 的原话显示出来。这一点很关键：**只要有一个条目不合规，Codex 就会拒绝整份文件**，代价是选择器里所有模型一起消失，而不只是自定义的那一个。
+
+目录条目只决定桌面端的显示名称与推理选项，实际请求仍用你填的模型 ID 和地址。目录写入后 Codex 的远程目录更新不再生效；把 `model_catalog_json` 改回原路径即可恢复。
 
 **回滚**：`~/.codex/model-ui-backups/` 下每个已应用的备份都可在界面里选择还原；还原前当前配置会另存为新备份。还原只覆盖本工具写过的文件（配置，以及应用时写过的目录文件），不删除任何钥匙串条目。
 
@@ -129,9 +133,9 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 在本机 macOS 上构建当前架构的应用：
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.6.0
+.venv/bin/python scripts/build_macos.py --version v0.6.1
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.6.0 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.6.1 --output "$HOME/WeSwitch release"
 ```
 
 构建脚本不安装依赖。入口为 `launch_desktop.py`；打包 `index.html`、`i18n.js` 以及存在时的 `assets/WeSwitch.icns`。工作文件与 spec 留在 `build/`，默认输出在 `dist/`；已有应用或同版本压缩包不会被覆盖，重复构建请指定新的输出目录。脚本校验 Python 与应用可执行文件架构，再用 `ditto` 保留 bundle 元数据生成 zip 和 SHA-256 文件。初始 GitHub Release 工作流只发布 arm64 应用。
@@ -139,7 +143,7 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 Release 工作流接受 `v*` 标签推送，或从默认分支手动指定**已存在**的稳定版本标签；PR 不发布，只有发布 job 拥有 `contents: write` 权限，不使用长期密钥。请先完成代码审查和测试，再创建、推送版本标签。手动重试命令：
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.0
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.1
 ```
 
 ## 许可证

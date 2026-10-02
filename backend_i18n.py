@@ -136,10 +136,16 @@ _EXACT_TRANSLATIONS = {
         "The backup has been restored. The configuration as it was before restoring has been saved as a new backup, so the restore itself can be reversed; fully quit the application (⌘Q) and reopen it.",
     "强制 API Key 登录需要钥匙串或环境变量认证；无认证模式不支持。":
         "Forcing API Key sign-in requires Keychain or environment-variable authentication; keyless mode is not supported.",
-    "未找到现有模型目录：model_catalog_json 未设置或无法读取。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。":
-        "No existing model catalog was found: model_catalog_json is unset or unreadable. To avoid making the built-in models disappear from the picker, this tool does not create a catalog containing only custom models.",
+    "未找到现有模型目录：model_catalog_json 未设置，也读不到 Codex 内置模型列表。为避免让官方模型从选择器中消失，本工具不新建只包含自定义模型的目录。":
+        "No existing model catalog was found, and Codex's built-in model list could not be read either. To avoid making the built-in models disappear from the picker, this tool does not create a catalog containing only custom models.",
     "现有模型目录为空或无法解析，为保证官方模型仍可选，未生成新目录。":
         "The existing model catalog is empty or cannot be parsed, so no new catalog was generated; this keeps the built-in models selectable.",
+    "本机原先没有模型目录；底稿取自本机缓存的模型列表 models_cache.json。":
+        "This machine had no model catalog; the starting point is the locally cached model list, models_cache.json.",
+    "本机原先没有模型目录；底稿取自 Codex 内置模型目录 codex debug models --bundled。":
+        "This machine had no model catalog; the starting point is Codex's built-in catalog, codex debug models --bundled.",
+    "目录写入后，桌面端选择器只读取这个文件；Codex 之后的远程目录更新不会自动生效。重新运行本工具会用当时的内置列表重建底稿。":
+        "After the catalog is written, the desktop picker reads only this file, so later remote catalog updates from Codex will not take effect on their own. Running this tool again rebuilds the starting point from the built-in list of that moment.",
     "生成的配置校验失败，停止写入。":
         "The generated configuration failed validation. Writing has been stopped.",
     "检测到无关设置发生变化，已阻止写入。":
@@ -411,6 +417,12 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
     (r"\A写入模型目录：(?P<path>[^\r\n]+)\Z", "Write the model catalog: {path}"),
     (r"\A合并现有目录 (?P<total>[0-9]+) 条记录，新增 (?P<count>[0-9]+) 个模型条目\Z",
      "Merge {total} entries from the existing catalog and add {count} model entries"),
+    # The report is Codex's own error text, kept verbatim. model_catalog collapses
+    # it onto one line so it matches here like every other captured parameter.
+    (r"\ACodex 拒绝这份模型目录，未生成任何文件：(?P<report>[^\r\n]+)\Z",
+     "Codex rejected this model catalog, so no file was written: {report}"),
+    (r"\A现有模型目录本身就无法被 Codex 解析，未生成任何文件：(?P<report>[^\r\n]+)\Z",
+     "The existing model catalog itself cannot be parsed by Codex, so no file was written: {report}"),
     (r"\A这些模型 ID 已在目录中，保留原有条目：(?P<models>[^\r\n]+)\Z",
      "These model IDs are already in the catalog; the existing entries are kept: {models}"),
     (r"\Aprofile 名称 (?P<name>[^\r\n]+) 已被占用且含本工具不写入的设置。请换个供应商 ID，或手动改名/删除该 profile 后重试。\Z",

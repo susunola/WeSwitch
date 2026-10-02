@@ -2333,7 +2333,7 @@
               <legend data-i18n class="sr-only">模型提供方与认证设置</legend>
               <div data-i18n class="form-body">
                 <div data-i18n class="settings-list">
-                  <p data-i18n class="field-hint">只填地址和 Key。名称、提供方和模型列表会自动补上。不要勾强制登录。</p>
+                  <p data-i18n class="field-hint" hidden>只填地址和 Key。名称、提供方和模型列表会自动补上。不要勾强制登录。</p>
                   <div data-i18n class="settings-row" hidden>
                     <label data-i18n class="field-label" for="name">提供方名称<code>name</code></label>
                     <div data-i18n class="row-control"><input id="name" name="name" type="text" data-i18n-placeholder placeholder="例如：我的模型服务" required aria-describedby="name-error" autocomplete="off"><p data-i18n id="name-error" class="field-error" hidden></p></div>
@@ -2344,13 +2344,13 @@
                   </div>
                   <div data-i18n class="settings-row">
                     <label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label>
-                    <div data-i18n class="row-control"><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p></div>
+                    <div data-i18n class="row-control"><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint" hidden>使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p></div>
                   </div>
                   <div data-i18n class="settings-row">
-                    <span data-i18n class="field-label"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>接口协议</span>
+                    <span data-i18n class="field-label" hidden><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>接口协议</span>
                     <div data-i18n class="row-control">
                       <div data-i18n class="readonly-field"><code data-i18n id="protocol-value">responses</code><span data-i18n class="pill">Codex 唯一支持</span></div>
-                      <p data-i18n id="protocol-hint" class="field-hint">Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。</p>
+                      <p data-i18n id="protocol-hint" class="field-hint" hidden>Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。</p>
                     </div>
                   </div>
                   <div data-i18n class="settings-row">
@@ -2377,12 +2377,12 @@
                   <label data-i18n class="field-label" for="api_key">API Key<span data-i18n id="api-key-optional" class="field-tag">必填</span><code>api_key</code></label>
                   <div data-i18n class="row-control">
                     <div data-i18n class="secret-input"><input id="api_key" name="api_key" class="mono" type="password" data-i18n-placeholder placeholder="输入 API Key" autocomplete="new-password" spellcheck="false" autocapitalize="none" aria-describedby="api-key-hint api_key-error" required><button data-i18n type="button" class="show-key" id="toggle-key" data-i18n-aria-label aria-label="显示 API Key" aria-pressed="false" aria-controls="api_key"><span data-i18n id="toggle-key-label">显示</span></button></div>
-                    <p data-i18n id="api-key-hint" class="field-hint">确认获取列表时，密钥经本地服务发送给你填写的服务商，但不保存。仅应用时保存密钥；预览请求不包含密钥。</p><p data-i18n id="api_key-error" class="field-error" hidden></p>
+                    <p data-i18n id="api-key-hint" class="field-hint" hidden>确认获取列表时，密钥经本地服务发送给你填写的服务商，但不保存。仅应用时保存密钥；预览请求不包含密钥。</p><p data-i18n id="api_key-error" class="field-error" hidden></p>
                     <p data-i18n class="inline-note warning" id="keychain-unavailable" hidden>本机 Keychain 不可用，当前模式不能预览或应用；仍可填写临时 API Key 获取列表，不会保存。预览与应用请改用其他认证方式。</p>
                   </div>
                 </div>
                   <div data-i18n class="settings-row">
-                    <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
+                    <label data-i18n class="field-label" for="model" hidden>模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
                     <div data-i18n class="row-control">
                       <div data-i18n class="model-input-row">
                         <textarea id="model" name="model" class="mono" rows="4" hidden data-i18n-placeholder placeholder="留空后点获取模型列表，用 Key 自动填入" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
@@ -2392,8 +2392,8 @@
                       <p data-i18n id="model-hint" class="field-hint" hidden>每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
                       <p data-i18n id="model-error" class="field-error" hidden></p>
                       <div data-i18n class="models-discovery">
-                        <p data-i18n id="models-consent" class="field-hint">获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
-                        <code data-i18n id="models-endpoint" class="file-path">填写 API 地址后显示 GET …/models。</code>
+                        <p data-i18n id="models-consent" class="field-hint" hidden>获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
+                        <code data-i18n id="models-endpoint" class="file-path" hidden>填写 API 地址后显示 GET …/models。</code>
                         <p data-i18n id="models-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未请求列表。仅点击获取并确认后发送请求；也可直接手动填写模型 ID。</p>
                         <ul id="models-warnings" class="change-list" data-i18n-aria-label aria-label="模型列表服务提示" hidden></ul>
                         <div data-i18n id="models-panel" aria-busy="false" hidden>
@@ -2407,8 +2407,8 @@
                       </div>
                       <div data-i18n class="connection-block">
                         <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n id="connection-badge" class="pill">未测试</span></div>
-                        <p data-i18n id="connection-consent" class="field-hint">测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
-                        <code data-i18n id="connection-endpoint" class="file-path">填写 API 地址后显示 POST …/responses。</code>
+                        <p data-i18n id="connection-consent" class="field-hint" hidden>测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
+                        <code data-i18n id="connection-endpoint" class="file-path" hidden>填写 API 地址后显示 POST …/responses。</code>
                         <p data-i18n id="connection-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未测试。仅点击测试连接并确认后发送请求；也可直接预览后自行验证。</p>
                         <ul id="connection-warnings" class="change-list" data-i18n-aria-label aria-label="连接测试提示" hidden></ul>
                       </div>
@@ -2418,15 +2418,15 @@
                 <p data-i18n class="inline-note auth-details" id="no-auth-note" hidden>此模式不保存或发送认证凭据。仅适用于无需认证的服务；确认获取列表会请求 /models，但不会测试模型生成。</p>
                 <div data-i18n class="settings-row checkbox-row">
                   <label data-i18n class="field-label" for="set_default"><input type="checkbox" id="set_default" name="set_default" checked>设为 Codex 默认模型</label>
-                  <div data-i18n class="row-control"><p data-i18n class="field-hint">更新默认提供方与模型。</p></div>
+                  <div data-i18n class="row-control"><p data-i18n class="field-hint" hidden>更新默认提供方与模型。</p></div>
                 </div>
                 <div data-i18n class="settings-row checkbox-row">
                   <label data-i18n class="field-label" for="write_catalog"><input type="checkbox" id="write_catalog" name="write_catalog" checked>写入模型目录</label>
-                  <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint">桌面端选择器读的是模型目录和 models_cache.json，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，并同步选择器缓存，原文件先备份。</p></div>
+                  <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint" hidden>桌面端选择器读的是模型目录和 models_cache.json，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，并同步选择器缓存，原文件先备份。</p></div>
                 </div>
                 <div data-i18n class="settings-row checkbox-row">
                   <label data-i18n class="field-label" for="force_api_login" hidden><input type="checkbox" id="force_api_login" name="force_api_login">强制 API Key 登录</label>
-                  <div data-i18n class="row-control"><p data-i18n id="force-api-login-note" class="field-hint">默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。</p></div>
+                  <div data-i18n class="row-control"><p data-i18n id="force-api-login-note" class="field-hint" hidden>默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。</p></div>
                 </div>
               </div>
             </fieldset>
@@ -2487,7 +2487,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.11</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.12</span></footer>
     </main>
   </div>
 </body>

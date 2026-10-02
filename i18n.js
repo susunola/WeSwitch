@@ -31,7 +31,6 @@
     '正在读取模型列表… 不保存凭据或配置，不调用模型生成。': 'Fetching models… No credentials or configuration will be saved, and no model generation will be called.',
     '模型列表响应格式不完整。': 'The model-list response is incomplete.',
     '模型列表端点不一致。': 'The model-list endpoint does not match.',
-    '已读取 {count} 个模型 ID，请自行选择或继续手动填写。': 'Fetched {count} model IDs. Choose one yourself or continue with manual entry.',
     '已用 Key 读取 {count} 个模型并填入列表。名称和提供方 ID 已按地址补全，可直接预览。': 'Fetched {count} models with the key and filled them in. Name and provider ID were completed from the address; you can preview now.',
     '留空后点获取模型列表，用 Key 自动填入': 'Leave blank, then fetch the model list to fill it from the key',
     '服务未返回模型 ID，可能为空或不支持模型列表。请手动填写，或再次点击获取重试。': 'No model IDs were returned. The list may be empty or unsupported. Enter a model manually or click Fetch to retry.',

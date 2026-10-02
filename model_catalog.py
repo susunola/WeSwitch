@@ -33,6 +33,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config_core import REASONING_EFFORTS
@@ -265,6 +266,47 @@ def merge(source_entries, new_entries):
         order.append(slug)
         added.append(slug)
     return {"models": [by_slug[slug] for slug in order]}, added, skipped
+
+
+def cache_plan(home, new_entries, seed_entries=()):
+    """Merge custom entries into models_cache.json, the signed-in picker cache.
+
+    The desktop model picker renders this server-fetched file, not profiles and
+    not only model_catalog_json. A custom model that never lands here stays in
+    the default recommended set. fetched_at is refreshed so the cache stays
+    inside its TTL and Codex does not immediately replace it with the remote
+    list. Existing entries are kept; a missing cache is seeded from the catalog
+    about to be written, which already contains the built-in models.
+    """
+    path = cache_path(home)
+    existed = path.is_file() and not path.is_symlink()
+    meta = {}
+    source = []
+    if existed:
+        try:
+            body = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            body = None
+        if isinstance(body, dict):
+            meta = {k: v for k, v in body.items() if k != "models"}
+            models = body.get("models")
+            if isinstance(models, list):
+                source = [m for m in models
+                          if isinstance(m, dict) and isinstance(m.get("slug"), str) and m["slug"]]
+    if not source:
+        source = list(seed_entries)
+    catalog, added, skipped = merge(source, new_entries)
+    body = dict(meta)
+    body["models"] = catalog["models"]
+    body["fetched_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+        "path": str(path),
+        "existed": existed,
+        "rendered": render(body),
+        "added": added,
+        "skipped": skipped,
+        "count": len(catalog["models"]),
+    }
 
 
 def render(catalog):

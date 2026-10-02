@@ -430,7 +430,7 @@ class ConfigStore:
             if (existing.get("auth") and not managed_account(existing)) or existing.get("requires_openai_auth"):
                 raise ConfigError("此供应商使用已有的外部认证方式。为避免移除认证，请新建独立供应商 ID。")
             allowed = {"name", "base_url", "wire_api", "auth", "env_key", "requires_openai_auth",
-                       "request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"}
+                       "experimental_bearer_token", "request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"}
             if set(existing) - allowed:
                 raise ConfigError("该供应商含额外认证、请求头或高级设置。为避免误覆盖，请换一个新的供应商 ID。")
             warnings = [

@@ -1998,6 +1998,16 @@
     .fact-list dd { font-size: 10px; color: var(--secondary); text-align: right; overflow-wrap: anywhere; }
     .sub-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 17px; padding-top: 15px; border-top: 1px solid #eceee4; font-size: 11px; }
     .chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; padding: 0; list-style: none; }
+
+    .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .settings-row > .field-label { padding-top: 0; }
+    .model-input-row { flex-direction: column; }
+    #fetch-models { width: 100%; margin-top: 8px; background: #2f6fed; color: #fff; border-color: #2f6fed; }
+    .chip-list { flex-direction: column; flex-wrap: nowrap; }
+    .chip { width: 100%; justify-content: space-between; min-height: 40px; padding: 8px 12px; border-radius: 8px; font-size: 13px; background: #fff; }
+    .chip code { font-size: 13px; }
+    .model-choice { min-height: 44px; }
+
     .chip-remove { margin-left: 6px; border: 0; background: transparent; cursor: pointer; }
     .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid #e4e7dc; background: #f5f6f0; border-radius: 5px; font-size: 10px; color: #5e6955; }
     .chip code { font: 10px var(--mono); color: #4d5745; }
@@ -2309,7 +2319,7 @@
 
       <div data-i18n class="workspace" id="editor-workspace">
         <section class="card" id="editor-card" aria-labelledby="form-title">
-          <div data-i18n class="card-heading"><div data-i18n class="card-title"><svg class="icon" aria-hidden="true"><use href="#icon-sliders"/></svg><div data-i18n><h2 data-i18n id="form-title">提供方配置</h2><p data-i18n id="editing-label" class="card-subtitle">新建提供方</p></div></div><span data-i18n class="pill">先预览 · 后写入</span></div>
+          <div data-i18n class="card-heading"><div data-i18n class="card-title"><svg class="icon" aria-hidden="true"><use href="#icon-sliders"/></svg><div data-i18n><h2 data-i18n id="form-title">提供方</h2><p data-i18n id="editing-label" class="card-subtitle">新建提供方</p></div></div><span data-i18n class="pill">先预览 · 后写入</span></div>
           <form id="provider-form" autocomplete="off" novalidate>
             <fieldset id="form-fields" disabled>
               <legend data-i18n class="sr-only">模型提供方与认证设置</legend>
@@ -2469,7 +2479,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.7</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.8</span></footer>
     </main>
   </div>
 </body>

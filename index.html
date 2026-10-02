@@ -112,6 +112,11 @@
         function setConnectionStatus(message, tone = 'neutral') {
           text('connection-status', message);
           $('connection-status').dataset.tone = tone;
+          const badge = $('connection-badge');
+          if (badge) {
+            text('connection-badge', tone === 'green' ? '连接成功' : tone === 'warning' ? '连接失败' : '未测试');
+            badge.dataset.tone = tone;
+          }
         }
 
         function setBackupStatus(message, tone = 'neutral') {
@@ -783,13 +788,13 @@
         function readConnectionPayload() {
           const payload = readModelsPayload();
           if (!payload) return null;
-          const model = defaultModel();
+          const checked = [...document.querySelectorAll('#model-select input:checked')].map((box) => box.value);
+          const model = defaultModel() || checked[0] || models[0] || '';
           if (!model) {
-            setFieldError('model', '请先填写至少一个模型 ID；连接测试会用它发送一次最短请求。');
-            fields.model.focus();
-            setConnectionStatus('尚未发送请求。请先填写至少一个模型 ID。', 'warning');
+            setConnectionStatus('还没有模型。先获取列表并勾选一个，再测试连接。', 'warning');
             return null;
           }
+          fields.model.value = fields.model.value.trim() || model;
           payload.model = model;
           return payload;
         }
@@ -2401,7 +2406,7 @@
                         </div>
                       </div>
                       <div data-i18n class="connection-block">
-                        <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n class="protocol-name">连接与协议检查</span></div>
+                        <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n id="connection-badge" class="pill">未测试</span></div>
                         <p data-i18n id="connection-consent" class="field-hint">测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
                         <code data-i18n id="connection-endpoint" class="file-path">填写 API 地址后显示 POST …/responses。</code>
                         <p data-i18n id="connection-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未测试。仅点击测试连接并确认后发送请求；也可直接预览后自行验证。</p>
@@ -2482,7 +2487,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.10</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.11</span></footer>
     </main>
   </div>
 </body>

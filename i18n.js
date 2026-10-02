@@ -1,11 +1,11 @@
-     '删除这个自定义模型，默认': 'Remove this custom model. Default',
-    '模型不会受影响': 'GPT models are not affected',
-    '尚未删除。': 'Nothing removed yet.',
-    '已从目录删除所选模型': 'Removed the selected models from the catalog',
-   '删除这个自定义模型，默认 GPT 模型不会受影响': 'Remove this custom model. Default GPT models are not affected',
 (() => {
   'use strict';
   const english = Object.freeze({
+    '删除这个自定义模型，默认': 'Remove this custom model. Default',
+    '模型不会受影响': 'GPT models are not affected',
+    '尚未删除。': 'Nothing removed yet.',
+    '已从目录删除所选模型': 'Removed the selected models from the catalog',
+    '删除这个自定义模型，默认 GPT 模型不会受影响': 'Remove this custom model. Default GPT models are not affected',
     '填写有效 API 地址后显示 GET …/models；不要在地址中包含凭据或查询参数。': 'Enter a valid API URL to see GET …/models. Do not include credentials or query parameters.',
     '可一次添加多个': 'Add several at once',
     '默认模型': 'Default model',

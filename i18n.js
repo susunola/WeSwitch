@@ -224,6 +224,8 @@
     '仅本地筛选': 'Local filtering only',
     '按模型 ID 筛选': 'Filter by model ID',
     '从列表选择模型': 'Choose a model from the list',
+    '移除这个模型 ID': 'Remove this model ID',
+    '已从模型列表移除该 ID。请重新预览。': 'Removed that ID from the model list. Preview again.',
     '认证与运行选项': 'Authentication & runtime options',
     '认证方式': 'Authentication method',
     '本地 Keychain（推荐）': 'Local Keychain (recommended)',

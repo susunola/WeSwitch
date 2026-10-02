@@ -492,6 +492,38 @@
           });
           select.disabled = ids.length === 0;
           select.value = ids.includes(previous) ? previous : '';
+          renderModelCards();
+        }
+
+        // A read-only mirror of the typed list, so the batch textarea stays the
+        // single source of truth: removing a card only rewrites that textarea.
+        function renderModelCards() {
+          const container = $('model-cards');
+          const ids = parseModelIds();
+          container.replaceChildren();
+          container.hidden = ids.length === 0;
+          ids.forEach((id) => {
+            const card = document.createElement('span');
+            card.className = 'model-card';
+            const label = document.createElement('code');
+            label.textContent = id;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.textContent = '\u00d7';
+            i18n.setAttribute(remove, 'aria-label', '移除这个模型 ID');
+            remove.title = id;
+            remove.addEventListener('click', () => removeModelId(id));
+            card.append(label, remove);
+            container.append(card);
+          });
+        }
+
+        function removeModelId(id) {
+          fields.model.value = parseModelIds().filter((entry) => entry !== id).join('\n');
+          syncDefaultModelOptions();
+          renderModelOptions();
+          invalidatePlan();
+          setStatus('已从模型列表移除该 ID。请重新预览。');
         }
 
         function defaultModel() {
@@ -1587,7 +1619,12 @@
         form.addEventListener('reset', () => {
           resetModels();
           invalidatePlan('表单已重置，请重新预览。');
-          queueMicrotask(() => syncModelsEndpoint());
+          // The reset event fires before the controls are cleared, so the mirrored
+          // cards are rebuilt from the cleared field on the next microtask.
+          queueMicrotask(() => {
+            syncModelsEndpoint();
+            renderModelCards();
+          });
         });
         form.addEventListener('submit', preview);
         form.addEventListener('input', handleInput);
@@ -1830,9 +1867,6 @@
     .card-title > .icon { color: #657b57; width: 20px; height: 20px; }
     .card-subtitle { font-size: 10px; color: var(--muted); margin-top: 3px; }
     .form-body { padding: 23px 24px 4px; }
-    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 16px; }
-    .field { min-width: 0; }
-    .field.full { grid-column: 1 / -1; }
     .field-label { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; font-size: 12px; font-weight: 550; margin-bottom: 7px; }
     .field-tag { color: var(--muted); font-weight: 400; font-size: 10px; }
     .field-label code { font-size: 9px; color: var(--muted); font-weight: 400; margin-left: auto; }
@@ -1844,7 +1878,6 @@
     .field-hint { margin-top: 6px; font-size: 10px; color: var(--secondary); line-height: 1.8; }
     .field-error { font-size: 11px; margin-top: 5px; color: var(--red); line-height: 1.7; }
     .model-input-row { display: flex; align-items: stretch; gap: 8px; }
-    .model-input-row input { flex: 1; min-width: 0; }
     #fetch-models { flex: 0 0 auto; white-space: nowrap; padding-inline: 11px; }
     .models-discovery { margin-top: 12px; padding: 12px 13px; background: #f5f7f0; border: 1px solid #e3e8d9; border-radius: 8px; overflow-wrap: anywhere; }
     #models-consent { margin-top: 0; }
@@ -1854,9 +1887,7 @@
     #models-warnings { margin-top: 8px; }
     #models-panel { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
     #model-search { margin-bottom: 12px; }
-    .protocol-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .protocol-name { font-size: 11px; font-weight: 600; }
-    .protocol-row code { font-size: 10px; padding: 3px 8px; border: 1px solid #dde4d2; background: #f5f7f0; border-radius: 5px; }
     .connection-block { margin-top: 12px; padding: 12px 13px; background: #f5f7f0; border: 1px solid #e3e8d9; border-radius: 8px; overflow-wrap: anywhere; }
     .connection-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
     #test-connection { flex: 0 0 auto; white-space: nowrap; padding-inline: 11px; }
@@ -1881,10 +1912,7 @@
     .auth-details { margin-top: 17px; }
     .inline-note { padding: 11px 13px; font-size: 11px; color: var(--secondary); background: #f5f6ef; border: 1px solid #e4e7da; border-radius: 7px; line-height: 1.8; }
     .inline-note.warning { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-line); margin-top: 10px; }
-    .default-choice { display: flex; gap: 10px; align-items: flex-start; margin-top: 21px; padding: 14px 0 18px; }
     input[type="checkbox"] { appearance: auto; accent-color: var(--green); width: 16px; height: 16px; flex: 0 0 auto; margin: 3px 0 0; cursor: pointer; }
-    .default-choice label { font-size: 12px; cursor: pointer; }
-    .default-choice label span { display: block; font-size: 10px; margin-top: 3px; color: var(--secondary); }
     .form-footer { padding: 17px 24px; border-top: 1px solid var(--line); background: #fafbf6; border-radius: 0 0 var(--radius) var(--radius); display: flex; gap: 14px; align-items: center; justify-content: space-between; }
     .form-footer-note { font-size: 10px; color: var(--secondary); display: flex; gap: 6px; align-items: flex-start; }
     .form-footer-note .icon { width: 13px; height: 13px; margin-top: 2px; }
@@ -2004,7 +2032,48 @@
     .footer-signature { font: 9px/1.9 var(--mono); letter-spacing: 1px; white-space: nowrap; }
     #editor-card, #workspace-title { scroll-margin-top: 20px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (min-width: 1550px) { main { padding-inline: 64px; } .workspace { grid-template-columns: minmax(0, 1fr) 286px; gap: 24px; } .form-grid { gap: 21px; } }
+    /* Provider form restyle: label left, control right, hairline dividers.
+       Only the wrapping changes. Every field keeps its own id, listener and write
+       path, and the batch textarea, the multi-select, the TOML-key chips and every
+       hint stay where they were, inside the control column. */
+    .settings-list { display: grid; }
+    .settings-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 4px 22px; padding: 17px 0; border-bottom: 1px solid var(--line); align-items: start; }
+    .settings-row:first-child { padding-top: 3px; }
+    .settings-row:last-child { padding-bottom: 3px; border-bottom: 0; }
+    .settings-row > .field-label { margin-bottom: 0; padding-top: 12px; }
+    .settings-row > .field-label code { margin-left: 0; }
+    .settings-row > .field-label .icon { width: 13px; height: 13px; color: #8a9479; }
+    .settings-row > .row-control { min-width: 0; }
+    .settings-row.auth-details { margin-top: 0; }
+    .readonly-field { display: flex; align-items: center; gap: 9px; height: 41px; padding: 0 11px; background: #f5f6f0; border: 1px solid #e4e7da; border-radius: 7px; font-size: 12px; }
+    .readonly-field code { font-size: 11px; color: var(--ink); }
+    .readonly-field .pill { margin-left: auto; }
+    /* A read-only mirror of the typed list. Removing a card only rewrites the
+       textarea, so the field stays the single source of truth. */
+    .model-cards { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .model-card { display: inline-flex; align-items: center; max-width: 100%; border: 1px solid #dde4d2; background: #f5f7f0; border-radius: 7px; }
+    .model-card code { padding: 5px 3px 5px 9px; font-size: 11px; color: #4d5745; overflow-wrap: anywhere; }
+    .model-card button { display: grid; place-items: center; width: 22px; height: 22px; margin-right: 4px; border: 0; border-radius: 5px; background: transparent; color: #8a9479; font-size: 13px; line-height: 1; }
+    .model-card button:hover { background: #e5ebdf; color: #4b7042; }
+    textarea { width: 100%; padding: 10px 11px; background: var(--white); border: 1px solid #dce0d5; border-radius: 7px; color: var(--ink); font-size: 12px; line-height: 1.75; resize: vertical; box-shadow: 0 1px 2px rgba(29, 45, 25, .02); transition: border-color .15s, box-shadow .15s; }
+    textarea:hover { border-color: #b8c2ae; }
+    textarea:disabled { background: #f5f5ef; color: #7d8574; cursor: not-allowed; }
+    textarea:focus-visible { outline: 3px solid #dce9d4; outline-offset: 1px; border-color: #779b69; }
+    .model-input-row { align-items: flex-start; }
+    .model-input-row textarea { flex: 1; min-width: 0; min-height: 88px; }
+    /* The checkbox rows close the settings list, so they share its alignment and
+       dividers: the option sits in the label column, its consequence alongside. */
+    .settings-row.checkbox-row { align-items: center; padding: 15px 0; }
+    .settings-row.checkbox-row > .field-label { padding-top: 0; cursor: pointer; }
+    .settings-row.checkbox-row > .field-label input[type="checkbox"] { margin: 0; }
+    @media (max-width: 1080px) {
+      .settings-row { grid-template-columns: 138px minmax(0, 1fr); gap: 4px 17px; }
+    }
+    @media (max-width: 760px) {
+      .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      .settings-row > .field-label { padding-top: 0; }
+    }
+    @media (min-width: 1550px) { main { padding-inline: 64px; } .workspace { grid-template-columns: minmax(0, 1fr) 286px; gap: 24px; } }
     @media (max-width: 1200px) {
       .shell { grid-template-columns: 220px minmax(0, 1fr); }
       .sidebar { padding-inline: 15px; }
@@ -2071,8 +2140,6 @@
       main { padding-inline: 16px; }
       .topbar { align-items: flex-start; }
       .topbar-actions { flex-direction: column; align-items: flex-end; gap: 8px; }
-      .form-grid { grid-template-columns: minmax(0, 1fr); gap: 17px; }
-      .field.full { grid-column: auto; }
       .card-heading { padding: 18px; }
       .card-heading > .pill { font-size: 9px; padding-inline: 6px; }
       .form-body { padding-inline: 18px; }
@@ -2190,66 +2257,101 @@
             <fieldset id="form-fields" disabled>
               <legend data-i18n class="sr-only">模型提供方与认证设置</legend>
               <div data-i18n class="form-body">
-                <div data-i18n class="form-grid">
-                  <div data-i18n class="field"><label data-i18n class="field-label" for="name">提供方名称<code>name</code></label><input id="name" name="name" type="text" data-i18n-placeholder placeholder="例如：我的模型服务" required aria-describedby="name-error" autocomplete="off"><p data-i18n id="name-error" class="field-error" hidden></p></div>
-                  <div data-i18n class="field"><label data-i18n class="field-label" for="provider_id">提供方 ID<code>provider_id</code></label><input id="provider_id" name="provider_id" class="mono" type="text" value="custom" data-i18n-placeholder placeholder="custom" pattern="[a-z0-9_-]+" spellcheck="false" autocapitalize="none" aria-describedby="provider-id-hint provider_id-error"><p data-i18n id="provider-id-hint" class="field-hint">小写字母、数字、_ 或 -；留空使用 custom。</p><p data-i18n id="provider_id-error" class="field-error" hidden></p></div>
-                  <div data-i18n class="field full"><label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p>
-                    <div data-i18n class="protocol-row"><span data-i18n class="protocol-name">接口协议</span><code data-i18n id="protocol-value">responses</code><span data-i18n class="pill">Codex 唯一支持</span></div>
-                    <p data-i18n id="protocol-hint" class="field-hint">Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。</p>
+                <div data-i18n class="settings-list">
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="name">提供方名称<code>name</code></label>
+                    <div data-i18n class="row-control"><input id="name" name="name" type="text" data-i18n-placeholder placeholder="例如：我的模型服务" required aria-describedby="name-error" autocomplete="off"><p data-i18n id="name-error" class="field-error" hidden></p></div>
                   </div>
-                  <div data-i18n class="field full">
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="provider_id">提供方 ID<code>provider_id</code></label>
+                    <div data-i18n class="row-control"><input id="provider_id" name="provider_id" class="mono" type="text" value="custom" data-i18n-placeholder placeholder="custom" pattern="[a-z0-9_-]+" spellcheck="false" autocapitalize="none" aria-describedby="provider-id-hint provider_id-error"><p data-i18n id="provider-id-hint" class="field-hint">小写字母、数字、_ 或 -；留空使用 custom。</p><p data-i18n id="provider_id-error" class="field-error" hidden></p></div>
+                  </div>
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="base_url">API 地址<code>base_url</code></label>
+                    <div data-i18n class="row-control"><input id="base_url" name="base_url" class="mono" type="url" inputmode="url" data-i18n-placeholder placeholder="https://api.example.com/v1" required spellcheck="false" autocapitalize="none" aria-describedby="base-url-hint base_url-error"><p data-i18n id="base-url-hint" class="field-hint">使用完整 HTTPS 地址；HTTP 仅允许 localhost、127.0.0.1 或 ::1 回环地址。</p><p data-i18n id="base_url-error" class="field-error" hidden></p></div>
+                  </div>
+                  <div data-i18n class="settings-row">
+                    <span data-i18n class="field-label"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>接口协议</span>
+                    <div data-i18n class="row-control">
+                      <div data-i18n class="readonly-field"><code data-i18n id="protocol-value">responses</code><span data-i18n class="pill">Codex 唯一支持</span></div>
+                      <p data-i18n id="protocol-hint" class="field-hint">Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。</p>
+                    </div>
+                  </div>
+                  <div data-i18n class="settings-row">
                     <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
-                    <div data-i18n class="model-input-row">
-                      <textarea id="model" name="model" class="mono" rows="3" data-i18n-placeholder placeholder="deepseek-reasoner&#10;deepseek-chat" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
-                      <button data-i18n id="fetch-models" class="button" type="button" disabled aria-controls="models-panel" aria-describedby="models-consent models-endpoint models-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span data-i18n id="fetch-models-label">获取模型列表</span></button>
-                    </div>
-                    <p data-i18n id="model-hint" class="field-hint">每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
-                    <p data-i18n id="model-error" class="field-error" hidden></p>
-                    <div data-i18n class="field default-model-field">
-                      <label data-i18n class="field-label" for="default_model">默认模型<span data-i18n class="field-tag">写入根级 model</span></label>
-                      <select id="default_model" aria-describedby="default-model-hint" disabled><option data-i18n value="">默认使用第一行</option></select>
-                      <p data-i18n id="default-model-hint" class="field-hint">选中的模型写入根级 model；其余模型保存为可切换 profile，供你在 Codex 中切换。</p>
-                    </div>
-                    <div data-i18n class="models-discovery">
-                      <p data-i18n id="models-consent" class="field-hint">获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
-                      <code data-i18n id="models-endpoint" class="file-path">填写 API 地址后显示 GET …/models。</code>
-                      <p data-i18n id="models-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未请求列表。仅点击获取并确认后发送请求；也可直接手动填写模型 ID。</p>
-                      <ul id="models-warnings" class="change-list" data-i18n-aria-label aria-label="模型列表服务提示" hidden></ul>
-                      <div data-i18n id="models-panel" aria-busy="false" hidden>
-                        <label data-i18n class="field-label" for="model-search">搜索已获取的模型<span data-i18n class="field-tag">仅本地筛选</span></label>
-                        <input id="model-search" type="search" data-i18n-placeholder placeholder="按模型 ID 筛选" autocomplete="off" spellcheck="false" aria-controls="model-select" aria-describedby="models-filter-status" disabled>
-                        <label data-i18n class="field-label" for="model-select">从列表选择模型<span data-i18n class="field-tag">可按住 ⌘/Ctrl 多选</span></label>
-                        <select id="model-select" multiple size="6" aria-describedby="model-hint models-filter-status" disabled></select>
-                        <button data-i18n id="add-selected-models" class="button" type="button" disabled>加入模型列表</button>
-                        <p data-i18n id="models-filter-status" class="field-hint" role="status" aria-live="polite"></p>
+                    <div data-i18n class="row-control">
+                      <div data-i18n class="model-input-row">
+                        <textarea id="model" name="model" class="mono" rows="4" data-i18n-placeholder placeholder="deepseek-reasoner&#10;deepseek-chat" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
+                        <button data-i18n id="fetch-models" class="button" type="button" disabled aria-controls="models-panel" aria-describedby="models-consent models-endpoint models-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span data-i18n id="fetch-models-label">获取模型列表</span></button>
+                      </div>
+                      <div data-i18n class="model-cards" id="model-cards" hidden></div>
+                      <p data-i18n id="model-hint" class="field-hint">每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
+                      <p data-i18n id="model-error" class="field-error" hidden></p>
+                      <div data-i18n class="models-discovery">
+                        <p data-i18n id="models-consent" class="field-hint">获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
+                        <code data-i18n id="models-endpoint" class="file-path">填写 API 地址后显示 GET …/models。</code>
+                        <p data-i18n id="models-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未请求列表。仅点击获取并确认后发送请求；也可直接手动填写模型 ID。</p>
+                        <ul id="models-warnings" class="change-list" data-i18n-aria-label aria-label="模型列表服务提示" hidden></ul>
+                        <div data-i18n id="models-panel" aria-busy="false" hidden>
+                          <label data-i18n class="field-label" for="model-search">搜索已获取的模型<span data-i18n class="field-tag">仅本地筛选</span></label>
+                          <input id="model-search" type="search" data-i18n-placeholder placeholder="按模型 ID 筛选" autocomplete="off" spellcheck="false" aria-controls="model-select" aria-describedby="models-filter-status" disabled>
+                          <label data-i18n class="field-label" for="model-select">从列表选择模型<span data-i18n class="field-tag">可按住 ⌘/Ctrl 多选</span></label>
+                          <select id="model-select" multiple size="6" aria-describedby="model-hint models-filter-status" disabled></select>
+                          <button data-i18n id="add-selected-models" class="button" type="button" disabled>加入模型列表</button>
+                          <p data-i18n id="models-filter-status" class="field-hint" role="status" aria-live="polite"></p>
+                        </div>
+                      </div>
+                      <div data-i18n class="connection-block">
+                        <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n class="protocol-name">连接与协议检查</span></div>
+                        <p data-i18n id="connection-consent" class="field-hint">测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
+                        <code data-i18n id="connection-endpoint" class="file-path">填写 API 地址后显示 POST …/responses。</code>
+                        <p data-i18n id="connection-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未测试。仅点击测试连接并确认后发送请求；也可直接预览后自行验证。</p>
+                        <ul id="connection-warnings" class="change-list" data-i18n-aria-label aria-label="连接测试提示" hidden></ul>
                       </div>
                     </div>
-                    <div data-i18n class="connection-block">
-                      <div data-i18n class="connection-row"><button data-i18n id="test-connection" class="button" type="button" disabled aria-controls="connection-warnings" aria-describedby="connection-consent connection-endpoint connection-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n id="test-connection-label">测试连接</span></button><span data-i18n class="protocol-name">连接与协议检查</span></div>
-                      <p data-i18n id="connection-consent" class="field-hint">测试会向你填写的服务商真实发送一次最短请求（最多输出 16 个 token），据此判断该地址是否支持 Responses 协议以及凭据是否可用；可能产生少量费用。仅在你确认后发送，不保存密钥、不修改配置。</p>
-                      <code data-i18n id="connection-endpoint" class="file-path">填写 API 地址后显示 POST …/responses。</code>
-                      <p data-i18n id="connection-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true">尚未测试。仅点击测试连接并确认后发送请求；也可直接预览后自行验证。</p>
-                      <ul id="connection-warnings" class="change-list" data-i18n-aria-label aria-label="连接测试提示" hidden></ul>
+                  </div>
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="default_model">默认模型<span data-i18n class="field-tag">写入根级 model</span></label>
+                    <div data-i18n class="row-control">
+                      <select id="default_model" aria-describedby="default-model-hint" disabled><option data-i18n value="">默认使用第一行</option></select>
+                      <p data-i18n id="default-model-hint" class="field-hint">选中的模型写入根级 model；其余模型保存为可切换 profile，供你在 Codex 中切换。</p>
                     </div>
                   </div>
                 </div>
                 <div data-i18n class="form-section-divider"></div>
                 <div data-i18n class="section-caption"><h3 data-i18n><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg>认证与运行选项</h3><span data-i18n class="pill" id="keychain-status">等待状态</span></div>
-                <div data-i18n class="form-grid">
-                  <div data-i18n class="field"><label data-i18n class="field-label" for="auth_mode">认证方式<code>auth_mode</code></label><select id="auth_mode" name="auth_mode" aria-describedby="auth-hint"><option data-i18n value="keychain" selected>本地 Keychain（推荐）</option><option data-i18n value="env">环境变量</option><option data-i18n value="none">无认证</option></select><p data-i18n id="auth-hint" class="field-hint">密钥值不写入 TOML 配置。</p></div>
-                  <div data-i18n class="field"><label data-i18n class="field-label" for="reasoning_effort">推理强度<code>reasoning_effort</code></label><select id="reasoning_effort" name="reasoning_effort" aria-describedby="effort-hint"><option data-i18n value="" selected>不指定（不发送此字段）</option><option data-i18n value="none">无（none）</option><option data-i18n value="minimal">最小（minimal）</option><option data-i18n value="low">低（low）</option><option data-i18n value="medium">中（medium）</option><option data-i18n value="high">高（high）</option><option data-i18n value="xhigh">极高（xhigh）</option><option data-i18n value="max">最高（max）</option><option data-i18n value="ultra">极致（ultra）</option><option data-i18n value="persistent">持续（persistent）</option></select><p data-i18n id="effort-hint" class="field-hint">仅选择目标模型支持的级别；取值来自 codex-cli 的推理强度枚举。</p></div>
+                <div data-i18n class="settings-list">
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="auth_mode">认证方式<code>auth_mode</code></label>
+                    <div data-i18n class="row-control"><select id="auth_mode" name="auth_mode" aria-describedby="auth-hint"><option data-i18n value="keychain" selected>本地 Keychain（推荐）</option><option data-i18n value="env">环境变量</option><option data-i18n value="none">无认证</option></select><p data-i18n id="auth-hint" class="field-hint">密钥值不写入 TOML 配置。</p></div>
+                  </div>
+                  <div data-i18n class="settings-row">
+                    <label data-i18n class="field-label" for="reasoning_effort">推理强度<code>reasoning_effort</code></label>
+                    <div data-i18n class="row-control"><select id="reasoning_effort" name="reasoning_effort" aria-describedby="effort-hint"><option data-i18n value="" selected>不指定（不发送此字段）</option><option data-i18n value="none">无（none）</option><option data-i18n value="minimal">最小（minimal）</option><option data-i18n value="low">低（low）</option><option data-i18n value="medium">中（medium）</option><option data-i18n value="high">高（high）</option><option data-i18n value="xhigh">极高（xhigh）</option><option data-i18n value="max">最高（max）</option><option data-i18n value="ultra">极致（ultra）</option><option data-i18n value="persistent">持续（persistent）</option></select><p data-i18n id="effort-hint" class="field-hint">仅选择目标模型支持的级别；取值来自 codex-cli 的推理强度枚举。</p></div>
+                  </div>
                 </div>
-                <div data-i18n class="auth-details" id="keychain-fields">
+                <div data-i18n class="settings-row auth-details" id="keychain-fields">
                   <label data-i18n class="field-label" for="api_key">API Key<span data-i18n id="api-key-optional" class="field-tag">必填</span><code>api_key</code></label>
-                  <div data-i18n class="secret-input"><input id="api_key" name="api_key" class="mono" type="password" data-i18n-placeholder placeholder="输入 API Key" autocomplete="new-password" spellcheck="false" autocapitalize="none" aria-describedby="api-key-hint api_key-error" required><button data-i18n type="button" class="show-key" id="toggle-key" data-i18n-aria-label aria-label="显示 API Key" aria-pressed="false" aria-controls="api_key"><span data-i18n id="toggle-key-label">显示</span></button></div>
-                  <p data-i18n id="api-key-hint" class="field-hint">确认获取列表时，密钥经本地服务发送给你填写的服务商，但不保存。仅应用时保存密钥；预览请求不包含密钥。</p><p data-i18n id="api_key-error" class="field-error" hidden></p>
-                  <p data-i18n class="inline-note warning" id="keychain-unavailable" hidden>本机 Keychain 不可用，当前模式不能预览或应用；仍可填写临时 API Key 获取列表，不会保存。预览与应用请改用其他认证方式。</p>
+                  <div data-i18n class="row-control">
+                    <div data-i18n class="secret-input"><input id="api_key" name="api_key" class="mono" type="password" data-i18n-placeholder placeholder="输入 API Key" autocomplete="new-password" spellcheck="false" autocapitalize="none" aria-describedby="api-key-hint api_key-error" required><button data-i18n type="button" class="show-key" id="toggle-key" data-i18n-aria-label aria-label="显示 API Key" aria-pressed="false" aria-controls="api_key"><span data-i18n id="toggle-key-label">显示</span></button></div>
+                    <p data-i18n id="api-key-hint" class="field-hint">确认获取列表时，密钥经本地服务发送给你填写的服务商，但不保存。仅应用时保存密钥；预览请求不包含密钥。</p><p data-i18n id="api_key-error" class="field-error" hidden></p>
+                    <p data-i18n class="inline-note warning" id="keychain-unavailable" hidden>本机 Keychain 不可用，当前模式不能预览或应用；仍可填写临时 API Key 获取列表，不会保存。预览与应用请改用其他认证方式。</p>
+                  </div>
                 </div>
-                <div data-i18n class="auth-details" id="env-fields" hidden><label data-i18n class="field-label" for="env_key">环境变量名<code>env_key</code></label><input id="env_key" name="env_key" class="mono" type="text" data-i18n-placeholder placeholder="OPENAI_API_KEY" spellcheck="false" autocapitalize="none" aria-describedby="env-key-hint env_key-error" disabled><p data-i18n id="env-key-hint" class="field-hint">仅填写变量名称，不设置变量。获取列表只允许已保存且提供方 ID、API 地址、变量名均匹配的配置，并从本地服务进程环境读取凭据；启动 Codex 的环境也须能读取该变量。</p><p data-i18n id="env_key-error" class="field-error" hidden></p></div>
+                <div data-i18n class="settings-row auth-details" id="env-fields" hidden><label data-i18n class="field-label" for="env_key">环境变量名<code>env_key</code></label><div data-i18n class="row-control"><input id="env_key" name="env_key" class="mono" type="text" data-i18n-placeholder placeholder="OPENAI_API_KEY" spellcheck="false" autocapitalize="none" aria-describedby="env-key-hint env_key-error" disabled><p data-i18n id="env-key-hint" class="field-hint">仅填写变量名称，不设置变量。获取列表只允许已保存且提供方 ID、API 地址、变量名均匹配的配置，并从本地服务进程环境读取凭据；启动 Codex 的环境也须能读取该变量。</p><p data-i18n id="env_key-error" class="field-error" hidden></p></div></div>
                 <p data-i18n class="inline-note auth-details" id="no-auth-note" hidden>此模式不保存或发送认证凭据。仅适用于无需认证的服务；确认获取列表会请求 /models，但不会测试模型生成。</p>
-                <div data-i18n class="default-choice"><input type="checkbox" id="set_default" name="set_default" checked><label data-i18n for="set_default">设为 Codex 默认模型<span data-i18n>更新默认提供方与模型。</span></label></div>
-                <div data-i18n class="default-choice"><input type="checkbox" id="write_catalog" name="write_catalog" checked><label data-i18n for="write_catalog">写入模型目录<span data-i18n id="write-catalog-note">桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。</span></label></div>
-                <div data-i18n class="default-choice"><input type="checkbox" id="force_api_login" name="force_api_login" checked><label data-i18n for="force_api_login">强制 API Key 登录<span data-i18n id="force-api-login-note">写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。</span></label></div>
+                <div data-i18n class="settings-row checkbox-row">
+                  <label data-i18n class="field-label" for="set_default"><input type="checkbox" id="set_default" name="set_default" checked>设为 Codex 默认模型</label>
+                  <div data-i18n class="row-control"><p data-i18n class="field-hint">更新默认提供方与模型。</p></div>
+                </div>
+                <div data-i18n class="settings-row checkbox-row">
+                  <label data-i18n class="field-label" for="write_catalog"><input type="checkbox" id="write_catalog" name="write_catalog" checked>写入模型目录</label>
+                  <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint">桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。</p></div>
+                </div>
+                <div data-i18n class="settings-row checkbox-row">
+                  <label data-i18n class="field-label" for="force_api_login"><input type="checkbox" id="force_api_login" name="force_api_login" checked>强制 API Key 登录</label>
+                  <div data-i18n class="row-control"><p data-i18n id="force-api-login-note" class="field-hint">写入 preferred_auth_method 与 forced_login_method；ChatGPT 账号下的会话历史会暂时看不到，改回即可恢复。</p></div>
+                </div>
               </div>
             </fieldset>
             <div data-i18n class="form-footer"><p data-i18n class="form-footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-shield"/></svg><span data-i18n>预览不写入文件，也不发送密钥。</span></p><button data-i18n class="button primary" id="preview-button" type="submit" disabled><span data-i18n id="preview-label">预览配置更改</span><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button></div>

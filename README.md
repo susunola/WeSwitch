@@ -27,10 +27,10 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 
 The initial binary release target is **macOS Apple Silicon (arm64)**. CI builds target macOS 14; the local build has been smoke-tested on macOS 27. Other OS versions require validation. The standalone app bundles Python and does not require Python, Homebrew, or WorkBuddy to be installed.
 
-Once published, download `WeSwitch-v0.6.5-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
+Once published, download `WeSwitch-v0.6.6-macos-arm64.zip` and its `.zip.sha256` companion. In the download directory, run:
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.6.5-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.6.6-macos-arm64.zip.sha256
 ```
 
 Extract the archive and open `WeSwitch.app`. Your default browser opens the local UI. A checksum checks file integrity, not publisher identity.
@@ -134,9 +134,9 @@ CI uses Python 3.11 and 3.13 on Ubuntu. Tests should use temporary configuration
 Build for your current architecture on macOS:
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.6.5
+.venv/bin/python scripts/build_macos.py --version v0.6.6
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.6.5 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.6.6 --output "$HOME/WeSwitch release"
 ```
 
 The build script does not install dependencies. It packages `launch_desktop.py`, `index.html`, `i18n.js`, and `assets/WeSwitch.icns` when present. Work files and the spec stay in `build/`; output defaults to `dist/`. Existing apps and version archives are never overwritten; use a fresh output directory for another build. Python and executable architectures are checked, then `ditto` preserves bundle metadata in a zip with a SHA-256 companion. The initial GitHub Release workflow publishes arm64 only.
@@ -144,7 +144,7 @@ The build script does not install dependencies. It packages `launch_desktop.py`,
 The Release workflow accepts a `v*` tag push or a manual dispatch from the default branch referencing an **existing** stable version tag. PRs never publish. Only the release job has `contents: write`, and no long-lived credentials are used. Review and test the code before creating and pushing a version tag. To dispatch manually:
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.5
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.6
 ```
 
 ## License

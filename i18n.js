@@ -7,7 +7,7 @@
     '写入根级 model': 'Writes the root model',
     '默认使用第一行': 'Default: first line',
     '填写模型 ID 后可选': 'Available after entering model IDs',
-    '可按住 ⌘/Ctrl 多选': '⌘/Ctrl-click for multiple',
+    '加入所选模型': 'Add selected models',
     '加入模型列表': 'Add to model list',
     '已加入 {count} 个模型 ID，共 {total} 个；可选择默认模型后预览。': 'Added {count} model IDs, {total} in total. Pick a default model, then preview.',
     '每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。': 'One model ID per line. All of them share this provider and key, so you do not re-enter the URL and key for each variant such as Pro or Flash. The list does not prove Responses API compatibility or generation support.',

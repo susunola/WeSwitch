@@ -142,6 +142,10 @@ DYNAMIC_CASES = {
         ("写入模型目录：/Users/me/.codex/models.json",
          "Write the model catalog: /Users/me/.codex/models.json"),
     ),
+    "同步桌面选择器缓存：{}，新增 {} 个模型": (
+        ("同步桌面选择器缓存：/Users/me/.codex/models_cache.json，新增 1 个模型",
+         "Sync the desktop picker cache: /Users/me/.codex/models_cache.json, adding 1 models"),
+    ),
     "Codex 拒绝这份模型目录，未生成任何文件：{}": (
         (
             "Codex 拒绝这份模型目录，未生成任何文件：Error: failed to parse "

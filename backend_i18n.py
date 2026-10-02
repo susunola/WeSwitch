@@ -106,8 +106,6 @@ _EXACT_TRANSLATIONS = {
         "Catalog entries only determine the desktop display name and reasoning options; requests still use the model ID and API URL you entered.",
     "在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。":
         "Enable all reasoning effort options under [desktop] so the selected effort is not hidden by the UI.",
-    "配置中没有 [desktop] 表，未写入推理强度列表；若桌面端隐藏了所选强度，请手动添加。":
-        "The configuration has no [desktop] table, so the reasoning effort list was not written; if the desktop hides the selected effort, add it manually.",
     "写入 preferred_auth_method 与 forced_login_method，启动后直接使用 API Key 登录。":
         "Write preferred_auth_method and forced_login_method so the app signs in with the API Key directly on launch.",
     "改为 API Key 登录后，此前用 ChatGPT 账号登录的会话历史会归到另一种登录方式下而暂时看不到；改回即可恢复，不会被删除。":
@@ -142,6 +140,8 @@ _EXACT_TRANSLATIONS = {
         "The existing model catalog is empty or cannot be parsed, so no new catalog was generated; this keeps the built-in models selectable.",
     "本机原先没有模型目录；底稿取自本机缓存的模型列表 models_cache.json。":
         "This machine had no model catalog; the starting point is the locally cached model list, models_cache.json.",
+    "登录后的桌面选择器渲染的是 models_cache.json，不只是 models.json。已刷新缓存时间，避免立刻被远程推荐集覆盖。请完全退出 Codex（⌘Q）后再看下拉；若之后远程目录刷新盖掉缓存，重新应用一次即可。":
+        "The signed-in desktop picker renders models_cache.json, not only models.json. The cache timestamp was refreshed so the remote recommended set does not replace it immediately. Fully quit Codex (⌘Q) before checking the picker; re-apply if a later remote refresh overwrites the cache.",
     "本机原先没有模型目录；底稿取自 Codex 内置模型目录 codex debug models --bundled。":
         "This machine had no model catalog; the starting point is Codex's built-in catalog, codex debug models --bundled.",
     "目录写入后，桌面端选择器只读取这个文件；Codex 之后的远程目录更新不会自动生效。重新运行本工具会用当时的内置列表重建底稿。":
@@ -415,6 +415,8 @@ _TEMPLATES = tuple((re.compile(pattern), english) for pattern, english in (
     (r"\A这些模型不在现有本地目录中：(?P<models>[^\r\n]+)。桌面端选择器只渲染目录条目，未列入时选择器会退回默认推荐模型集；勾选写入模型目录可让它们出现在列表中。\Z",
      "These models are not in the existing local catalog: {models}. The desktop picker renders catalog entries only, so an unlisted model makes the picker fall back to the default recommended set. Enable 'write model catalog' to make them appear in the list."),
     (r"\A写入模型目录：(?P<path>[^\r\n]+)\Z", "Write the model catalog: {path}"),
+    (r"\A同步桌面选择器缓存：(?P<path>[^\r\n]+)，新增 (?P<count>[0-9]+) 个模型\Z",
+     "Sync the desktop picker cache: {path}, adding {count} models"),
     (r"\A合并现有目录 (?P<total>[0-9]+) 条记录，新增 (?P<count>[0-9]+) 个模型条目\Z",
      "Merge {total} entries from the existing catalog and add {count} model entries"),
     # The report is Codex's own error text, kept verbatim. model_catalog collapses

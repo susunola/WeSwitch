@@ -149,7 +149,7 @@
           if (!available) {
             text('write-catalog-note', '本机没有找到现有模型目录，也读不到 Codex 内置模型列表。为避免官方模型从选择器中消失，本工具不新建只含自定义模型的目录。');
           } else if (existing) {
-            text('write-catalog-note', '桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。');
+            text('write-catalog-note', '桌面端选择器读的是模型目录和 models_cache.json，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，并同步选择器缓存，原文件先备份。');
           } else {
             text('write-catalog-note', '本机还没有模型目录。勾选后会先用 Codex 内置模型列表作底稿，再合并你的模型；官方模型不会消失。');
           }
@@ -565,6 +565,23 @@
               : ''));
         }
 
+
+        function fillFromKey(ids) {
+          const host = (() => {
+            try { return new URL(fields.base_url.value.trim()).hostname.replace(/^api\./, '').split('.')[0]; }
+            catch { return ''; }
+          })();
+          const slug = host.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'custom';
+          if (!fields.name.value.trim()) fields.name.value = host || 'custom';
+          if (!fields.provider_id.value.trim() || fields.provider_id.value.trim() === 'custom') fields.provider_id.value = slug;
+          const fresh = ids.filter((id) => !existingModelIds().has(id));
+          if (fresh.length) {
+            fields.model.value = [...new Set([...parseModelIds(), ...fresh])].join('\n');
+            syncDefaultModelOptions();
+            invalidatePlan();
+          }
+        }
+
         function addSelectedModels() {
           const picked = [...$('model-select').selectedOptions].map((option) => option.value);
           if (!picked.length) return;
@@ -687,6 +704,7 @@
             if (new URL(data.endpoint).href !== endpoint) throw errorFor('模型列表端点不一致。', 'INVALID_MODELS');
             models = [...new Set(data.models.map((item) => item.id))];
             text('models-endpoint', raw('GET ' + endpoint));
+            fillFromKey(models);
             renderModelOptions();
             $('models-panel').hidden = models.length === 0;
             const safeWarning = (warning) => {
@@ -698,7 +716,7 @@
             fillList($('models-warnings'), data.warnings.map(safeWarning), responseLanguages.get(data));
             $('models-warnings').hidden = data.warnings.length === 0;
             const outcome = models.length
-              ? message('已读取 {count} 个模型 ID，请自行选择或继续手动填写。', { count: models.length })
+              ? message('已用 Key 读取 {count} 个模型并填入列表。名称和提供方 ID 已按地址补全，可直接预览。', { count: models.length })
               : '服务未返回模型 ID，可能为空或不支持模型列表。请手动填写，或再次点击获取重试。';
             setModelsStatus(concat(outcome, data.complete ? '' : ' 列表可能不完整，可再次点击获取重试或手动填写。',
               ' 列出模型不代表支持 Responses API；未测试模型生成。'), models.length && data.complete ? 'green' : 'warning');
@@ -2289,7 +2307,7 @@
                     <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
                     <div data-i18n class="row-control">
                       <div data-i18n class="model-input-row">
-                        <textarea id="model" name="model" class="mono" rows="4" data-i18n-placeholder placeholder="deepseek-reasoner&#10;deepseek-chat" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
+                        <textarea id="model" name="model" class="mono" rows="4" data-i18n-placeholder placeholder="留空后点获取模型列表，用 Key 自动填入" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
                         <button data-i18n id="fetch-models" class="button" type="button" disabled aria-controls="models-panel" aria-describedby="models-consent models-endpoint models-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span data-i18n id="fetch-models-label">获取模型列表</span></button>
                       </div>
                       <div data-i18n class="model-cards" id="model-cards" hidden></div>
@@ -2354,7 +2372,7 @@
                 </div>
                 <div data-i18n class="settings-row checkbox-row">
                   <label data-i18n class="field-label" for="write_catalog"><input type="checkbox" id="write_catalog" name="write_catalog" checked>写入模型目录</label>
-                  <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint">桌面端选择器只渲染目录条目，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，原目录先备份。</p></div>
+                  <div data-i18n class="row-control"><p data-i18n id="write-catalog-note" class="field-hint">桌面端选择器读的是模型目录和 models_cache.json，不写入时你的模型不会出现在列表里。勾选后合并到 ~/.codex/models.json，并同步选择器缓存，原文件先备份。</p></div>
                 </div>
                 <div data-i18n class="settings-row checkbox-row">
                   <label data-i18n class="field-label" for="force_api_login"><input type="checkbox" id="force_api_login" name="force_api_login" checked>强制 API Key 登录</label>
@@ -2386,7 +2404,7 @@
             <p data-i18n class="field-hint" id="usage-status" role="status" aria-live="polite">尚未查询用量。套餐与模型列表不需要联网。</p>
             <div class="usage-meter" id="usage-meter" hidden></div>
           </section>
-          <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器只渲染目录条目。勾选“写入模型目录”才会把你的模型合并进去；原始目录文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
+          <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器读的是模型目录和 models_cache.json。勾选“写入模型目录”才会把你的模型合并进去，并同步选择器缓存；原始文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
           <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><p class="field-hint" id="backup-policy"></p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
           <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
         </aside>

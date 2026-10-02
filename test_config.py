@@ -1506,7 +1506,36 @@ class CatalogTests(ConfigFixture):
         self.assertIsNone(manifest["catalog"]["before_sha256"])
         self.assertEqual(manifest["catalog"]["after_sha256"],
                          hashlib.sha256((self.home / "models.json").read_bytes()).hexdigest())
-        self.assertEqual(manifest["catalog"]["backups"], ["catalog-source.json"])
+        self.assertEqual(manifest["catalog"]["backups"],
+                         [{"name": "catalog-source.json", "path": str(self.catalog)}])
+
+    def test_write_catalog_syncs_the_picker_cache_and_restore_puts_it_back(self):
+        # The signed-in desktop picker renders models_cache.json. Writing only
+        # models.json leaves the dropdown on the default recommended set.
+        cache = self.write_cache()
+        before = cache.read_bytes()
+        preview, applied = self.commit(self.form(write_catalog=True))
+        self.assertIn("同步桌面选择器缓存：" + str(cache) + "，新增 1 个模型", preview["changes"])
+        body = json.loads(cache.read_bytes())
+        slugs = [m["slug"] for m in body["models"]]
+        self.assertEqual(slugs[0], REAL_ENTRY["slug"])
+        self.assertIn("new-model", slugs)
+        self.assertNotEqual(body["fetched_at"], "2026-10-02T04:02:31.668714Z")
+        self.assertEqual(body["etag"], 'W/"666d7451"')
+        backup = Path(applied["backup_path"])
+        self.assertTrue((backup / "models-cache.json").is_file())
+        self.store.restore({"confirmed": True, "backup_id": backup.name})
+        self.assertEqual(cache.read_bytes(), before)
+
+    def test_write_catalog_seeds_a_missing_picker_cache_from_the_merged_catalog(self):
+        cache = self.home / "models_cache.json"
+        self.assertFalse(cache.exists())
+        _, applied = self.commit(self.form(write_catalog=True))
+        body = json.loads(cache.read_bytes())
+        slugs = [m["slug"] for m in body["models"]]
+        self.assertEqual(slugs, ["original-model", "new-model"])
+        self.store.restore({"confirmed": True, "backup_id": Path(applied["backup_path"]).name})
+        self.assertFalse(cache.exists())
 
     def test_write_catalog_reports_models_that_already_exist_instead_of_overwriting_them(self):
         preview, result = self.commit(self.form(write_catalog=True, model="original-model"))
@@ -1539,10 +1568,11 @@ class CatalogTests(ConfigFixture):
         self.assertEqual(parsed["desktop"]["enabled-reasoning-efforts"], list(core.REASONING_EFFORTS))
         self.assertIn("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。", preview["changes"])
 
-    def test_write_catalog_discloses_a_missing_desktop_table_instead_of_inventing_one(self):
+    def test_write_catalog_creates_the_desktop_effort_list_when_the_table_is_missing(self):
         preview, _ = self.commit(self.form(write_catalog=True))
-        self.assertNotIn("desktop", tomllib.loads(self.path.read_text()))
-        self.assertTrue(any("配置中没有 [desktop] 表" in w for w in preview["warnings"]))
+        parsed = tomllib.loads(self.path.read_text())
+        self.assertEqual(parsed["desktop"]["enabled-reasoning-efforts"], list(core.REASONING_EFFORTS))
+        self.assertIn("在 [desktop] 中启用全部推理强度选项，避免所选强度被界面隐藏。", preview["changes"])
 
 
 class LoginModeTests(ConfigFixture):
@@ -1596,7 +1626,7 @@ class RestoreTests(ConfigFixture):
         restored = self.store.restore({"confirmed": True, "backup_id": backup_id})
         self.assertTrue(restored["catalog_restored"])
         self.assertEqual(self.path.read_bytes(), ORIGINAL)
-        self.assertEqual((self.home / "models.json").read_bytes(), CATALOG)
+        self.assertFalse((self.home / "models.json").exists())
         self.assertEqual(self.catalog.read_bytes(), CATALOG)
 
     def test_restore_requires_confirmation_and_a_real_applied_backup(self):

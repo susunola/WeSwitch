@@ -1,4 +1,8 @@
-    '删除这个自定义模型，默认 GPT 模型不会受影响': 'Remove this custom model. Default GPT models are not affected',
+     '删除这个自定义模型，默认': 'Remove this custom model. Default',
+    '模型不会受影响': 'GPT models are not affected',
+    '尚未删除。': 'Nothing removed yet.',
+    '已从目录删除所选模型': 'Removed the selected models from the catalog',
+   '删除这个自定义模型，默认 GPT 模型不会受影响': 'Remove this custom model. Default GPT models are not affected',
 (() => {
   'use strict';
   const english = Object.freeze({

@@ -1,6 +1,10 @@
 (() => {
   'use strict';
   const english = Object.freeze({
+    '还没有模型。先获取列表并勾选一个，再测试连接。': 'No model yet. Fetch the list, check one, then test the connection.',
+    '连接成功': 'Connected',
+    '连接失败': 'Failed',
+    '未测试': 'Not tested',
     '删除这个自定义模型，默认': 'Remove this custom model. Default',
     '模型不会受影响': 'GPT models are not affected',
     '尚未删除。': 'Nothing removed yet.',
@@ -308,7 +312,6 @@
     '接口协议': 'Wire protocol',
     'Codex 唯一支持': 'The only one Codex supports',
     'Codex 只使用 Responses 接口协议（wire_api = "responses"）；codex-cli 已移除 chat（Chat Completions），所以没有协议下拉可选。你要确认的只有一件事：这个地址是否提供 /responses。': 'Codex speaks only the Responses protocol (wire_api = "responses"). codex-cli removed chat (Chat Completions), so there is no protocol menu to offer. There is exactly one thing to confirm: does this URL serve /responses?',
-    '连接与协议检查': 'Connection & protocol check',
     '连接测试提示': 'Connection-test notices',
     '测试连接': 'Test connection',
     '正在测试…': 'Testing…',
@@ -332,8 +335,6 @@
     '协议不兼容 · HTTP {status} · {latency} ms': 'Protocol incompatible · HTTP {status} · {latency} ms',
     ' 未保存密钥或配置；这只是一次最短请求的结果。': ' No keys or configuration were saved. This is the result of one minimal request.',
     ' 可手动填写模型 ID 并直接预览，或稍后重试；未保存密钥或配置。': ' Enter a model ID manually and preview directly, or retry later. No keys or configuration were saved.',
-    '尚未发送请求。请先填写至少一个模型 ID。': 'No request has been sent. Enter at least one model ID first.',
-    '请先填写至少一个模型 ID；连接测试会用它发送一次最短请求。': 'Enter at least one model ID first. The connection test sends one minimal request using it.',
     '将使用你的凭据向 {endpoint} 发送一次最短的 Responses 请求（模型 {model}，最多输出 16 个 token），用于判断该地址是否支持该协议、凭据是否可用。可能产生少量费用。是否继续？': 'Use your credentials to send one minimal Responses request to {endpoint} (model {model}, at most 16 output tokens) to check whether the URL supports the protocol and whether the credentials work? This may cost a small amount. Continue?',
     '将不携带认证凭据向 {endpoint} 发送一次最短的 Responses 请求（模型 {model}，最多输出 16 个 token），用于判断该地址是否支持该协议。可能产生少量费用。是否继续？': 'Send one minimal Responses request to {endpoint} without authentication credentials (model {model}, at most 16 output tokens) to check whether the URL supports the protocol? This may cost a small amount. Continue?',
     // Model catalog and API-key login switches.

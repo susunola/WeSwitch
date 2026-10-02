@@ -572,6 +572,10 @@
             box.addEventListener('change', () => {
               if (box.checked) pickedModels.add(id);
               else pickedModels.delete(id);
+              const current = parseModelIds().filter((entry) => entry !== id);
+              fields.model.value = (box.checked ? [...current, id] : current).join('\n');
+              syncDefaultModelOptions();
+              invalidatePlan();
               $('add-selected-models').disabled = !select.querySelector('input:checked');
             });
             const name = document.createElement('span');
@@ -2376,11 +2380,11 @@
                     <label data-i18n class="field-label" for="model">模型 ID<code>model</code><span data-i18n class="field-tag">可一次添加多个</span></label>
                     <div data-i18n class="row-control">
                       <div data-i18n class="model-input-row">
-                        <textarea id="model" name="model" class="mono" rows="4" data-i18n-placeholder placeholder="留空后点获取模型列表，用 Key 自动填入" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
+                        <textarea id="model" name="model" class="mono" rows="4" hidden data-i18n-placeholder placeholder="留空后点获取模型列表，用 Key 自动填入" required spellcheck="false" autocapitalize="none" aria-describedby="model-hint model-error"></textarea>
                         <button data-i18n id="fetch-models" class="button" type="button" disabled aria-controls="models-panel" aria-describedby="models-consent models-endpoint models-status" aria-busy="false"><svg class="icon busy-icon" aria-hidden="true"><use href="#icon-refresh"/></svg><span data-i18n id="fetch-models-label">获取模型列表</span></button>
                       </div>
                       <div data-i18n class="model-cards" id="model-cards" hidden></div>
-                      <p data-i18n id="model-hint" class="field-hint">每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
+                      <p data-i18n id="model-hint" class="field-hint" hidden>每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。</p>
                       <p data-i18n id="model-error" class="field-error" hidden></p>
                       <div data-i18n class="models-discovery">
                         <p data-i18n id="models-consent" class="field-hint">获取前会弹窗确认：将使用你的凭据向下方服务商读取模型列表（无认证模式除外），不保存密钥、不修改配置、不调用模型生成。输入和打开页面都不会自动获取；预览不发送密钥。</p>
@@ -2392,7 +2396,7 @@
                           <input id="model-search" type="search" data-i18n-placeholder placeholder="按模型 ID 筛选" autocomplete="off" spellcheck="false" aria-controls="model-select" aria-describedby="models-filter-status" disabled>
                           <label data-i18n class="field-label" for="model-select">从列表选择模型</label>
                           <div id="model-select" class="model-list" role="group" aria-describedby="model-hint models-filter-status"></div>
-                          <button data-i18n id="add-selected-models" class="button" type="button" disabled>加入所选模型</button>
+                          <button data-i18n id="add-selected-models" class="button" type="button" hidden disabled>加入所选模型</button>
                           <p data-i18n id="models-filter-status" class="field-hint" role="status" aria-live="polite"></p>
                         </div>
                       </div>
@@ -2478,7 +2482,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.9</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.10</span></footer>
     </main>
   </div>
 </body>

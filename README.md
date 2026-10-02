@@ -21,6 +21,17 @@ WeSwitch is an independent community project, not affiliated with OpenAI. **Chin
 - **Every apply is reversible:** each apply produces a verified backup, and any applied backup can be restored from the UI. The current configuration is backed up again before restoring, so a restore is itself reversible. The backup directory keeps the most recent 5 plus the original, clearing anything beyond that after an apply or a restore.
 - **See what Codex already has first:** plan, account, subscription expiry, and login-token status are read **offline** from local sign-in data, and the installed model list from the local catalog. Models you already have are marked and **left unchecked by default**, so the same model cannot be added twice by accident.
 
+
+## How to use
+
+1. Open WeSwitch and enter only the API URL and key.
+2. Click fetch models, then check the ones you want. The name and provider are filled from the URL.
+3. Optionally click test connection. The result appears next to the button.
+4. Preview and confirm. Leave force API-key login off, so the official login stays in `auth.json`.
+5. Fully quit Codex (⌘Q) and start a new chat. Do not switch back to an official GPT model in the picker, or the request still goes to OpenAI.
+
+Models added by this tool have an × in the existing-model list. Confirm to remove one. Official GPT models have no × and are not deleted.
+
 ## Get started
 
 ### Recommended: standalone Apple Silicon app

@@ -8,7 +8,6 @@
     '默认使用第一行': 'Default: first line',
     '填写模型 ID 后可选': 'Available after entering model IDs',
     '加入所选模型': 'Add selected models',
-    '加入模型列表': 'Add to model list',
     '已加入 {count} 个模型 ID，共 {total} 个；可选择默认模型后预览。': 'Added {count} model IDs, {total} in total. Pick a default model, then preview.',
     '每行一个模型 ID，用同一个提供方和密钥一次添加；不需要为 Pro、Flash 等重复填写地址和密钥。列表不证明 Responses API 兼容性或生成能力。': 'One model ID per line. All of them share this provider and key, so you do not re-enter the URL and key for each variant such as Pro or Flash. The list does not prove Responses API compatibility or generation support.',
     '选中的模型写入根级 model；其余模型保存为可切换 profile，供你在 Codex 中切换。': 'The selected model is written to the root model; the others are saved as switchable profiles you can select in Codex.',
@@ -409,7 +408,6 @@
     '其中 {count} 个被标记为隐藏（visibility 不是 list），不会出现在选择器里。': '{count} of them are marked hidden (visibility is not "list") and never appear in the picker.',
     '其中 {count} 个有更新的替代模型（见 → 标记）。': '{count} of them have a newer replacement (see the → marker).',
     '目录由客户端版本 {version} 写入。': 'The catalog was written by client version {version}.',
-    '（已加过）': ' (already added)',
     '，其中 {count} 个已加过（默认不勾选，仍可手动选择）。': ', of which {count} are already added (unchecked by default; you can still select them manually).',
     ' 其中 {count} 个此前已在本机列表中，没有重复写入。': ' {count} of them were already in the local list; nothing was written twice.',
     // On-demand usage query. Sent only after an explicit confirmation.

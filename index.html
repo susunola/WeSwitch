@@ -296,7 +296,7 @@
               remove.className = 'chip-remove';
               remove.textContent = '×';
               remove.addEventListener('click', async () => {
-                if (!window.confirm('删除 ' + entry.slug + ' ？默认 GPT 模型不会受影响')) return;
+                if (!window.confirm('删除这个自定义模型，默认 GPT 模型不会受影响')) return;
                 const data = await api('/api/remove', { body: { confirmed: true, models: [entry.slug] } });
                 text('remove-status', data.message || '已从目录删除所选模型');
                 await loadState();

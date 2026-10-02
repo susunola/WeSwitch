@@ -1,3 +1,4 @@
+    '删除这个自定义模型，默认 GPT 模型不会受影响': 'Remove this custom model. Default GPT models are not affected',
 (() => {
   'use strict';
   const english = Object.freeze({
@@ -31,15 +32,8 @@
     '模型列表响应格式不完整。': 'The model-list response is incomplete.',
     '模型列表端点不一致。': 'The model-list endpoint does not match.',
     '默认关闭，保留 auth.json 里的官方登录。勾选后桌面端改走 API Key 登录，官方会话会暂时看不到。': 'Off by default, so the official login in auth.json is kept. Turning it on makes the desktop app use API-key login, and official chats are hidden until you switch back.',
-    '删除所选自定义模型，默认 GPT 模型不会受影响': 'Remove the selected custom models. Default GPT models are not affected',
-    '已从目录删除所选模型': 'Removed the selected models from the catalog',
     '无认证模式没有可用于登录的凭据，因此不写入登录方式。': 'No-auth mode has no credential to log in with, so no login method is written.',
     '只填地址和 Key。名称、提供方和模型列表会自动补上。不要勾强制登录。': 'Enter only the URL and key. The name, provider, and model list are filled in. Leave force-login off.',
-    '删除自定义模型': 'Remove custom models',
-    '只删除本工具添加的模型。默认 GPT 模型不会出现在这里，也不会被删除。': 'Only models added by this tool can be removed. Default GPT models are not listed and are not deleted.',
-    '从模型目录和选择器缓存移除所选条目。': 'Remove the selected entries from the catalog and the picker cache.',
-    '删除所选模型': 'Remove selected models',
-    '尚未删除。': 'Nothing removed yet.',
     '已用 Key 读取 {count} 个模型并填入列表。名称和提供方 ID 已按地址补全，可直接预览。': 'Fetched {count} models with the key and filled them in. Name and provider ID were completed from the address; you can preview now.',
     '留空后点获取模型列表，用 Key 自动填入': 'Leave blank, then fetch the model list to fill it from the key',
     '服务未返回模型 ID，可能为空或不支持模型列表。请手动填写，或再次点击获取重试。': 'No model IDs were returned. The list may be empty or unsupported. Enter a model manually or click Fetch to retry.',

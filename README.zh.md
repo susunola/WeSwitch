@@ -38,10 +38,10 @@ WeSwitch 是独立社区项目，不隶属于 OpenAI。**默认中文，可随�
 
 初始二进制发布目标为 **macOS Apple Silicon（arm64）**；CI 构建使用 macOS 14，本地构建已在 macOS 27 验证。其他系统版本尚需实际验证。独立应用内置 Python，不需要安装 Python、Homebrew 或 WorkBuddy。
 
-发布后，下载 `WeSwitch-v0.6.13-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
+发布后，下载 `WeSwitch-v0.6.14-macos-arm64.zip` 及其 `.zip.sha256` 校验文件；在下载目录运行：
 
 ```bash
-shasum -a 256 -c WeSwitch-v0.6.13-macos-arm64.zip.sha256
+shasum -a 256 -c WeSwitch-v0.6.14-macos-arm64.zip.sha256
 ```
 
 解压后打开 `WeSwitch.app`，默认浏览器会显示本地界面。校验和用于检查文件完整性，不等于发行者身份认证。
@@ -145,9 +145,9 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 在本机 macOS 上构建当前架构的应用：
 
 ```bash
-.venv/bin/python scripts/build_macos.py --version v0.6.13
+.venv/bin/python scripts/build_macos.py --version v0.6.14
 # Optional: choose a fresh distribution directory.
-.venv/bin/python scripts/build_macos.py --version v0.6.13 --output "$HOME/WeSwitch release"
+.venv/bin/python scripts/build_macos.py --version v0.6.14 --output "$HOME/WeSwitch release"
 ```
 
 构建脚本不安装依赖。入口为 `launch_desktop.py`；打包 `index.html`、`i18n.js` 以及存在时的 `assets/WeSwitch.icns`。工作文件与 spec 留在 `build/`，默认输出在 `dist/`；已有应用或同版本压缩包不会被覆盖，重复构建请指定新的输出目录。脚本校验 Python 与应用可执行文件架构，再用 `ditto` 保留 bundle 元数据生成 zip 和 SHA-256 文件。初始 GitHub Release 工作流只发布 arm64 应用。
@@ -155,7 +155,7 @@ CI 在 Ubuntu 上分别使用 Python 3.11 / 3.13。测试应只使用临时配�
 Release 工作流接受 `v*` 标签推送，或从默认分支手动指定**已存在**的稳定版本标签；PR 不发布，只有发布 job 拥有 `contents: write` 权限，不使用长期密钥。请先完成代码审查和测试，再创建、推送版本标签。手动重试命令：
 
 ```bash
-gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.13
+gh workflow run release.yml --repo susunola/WeSwitch -f version=v0.6.14
 ```
 
 ## 许可证

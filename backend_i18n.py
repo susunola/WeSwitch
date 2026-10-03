@@ -104,6 +104,9 @@ _EXACT_TRANSLATIONS = {
         "After the catalog is written, the desktop picker uses this file; later remote catalog updates from Codex will no longer take effect. Point model_catalog_json back at the original path to restore that.",
     "目录条目只决定桌面端的显示名称与推理选项；实际请求仍使用你填写的模型 ID 和 API 地址。":
         "Catalog entries only determine the desktop display name and reasoning options; requests still use the model ID and API URL you entered.",
+    "请先确认，才会切回官方。": "Confirm before switching back to the official provider.",
+    "没有可修改的配置文件。": "There is no configuration file to change.",
+    "已切回官方提供方。请完全退出 Codex（⌘Q）后再打开。下拉里的官方模型才会走 OpenAI。": "Switched back to the official provider. Fully quit Codex, then open it again. Official models in the picker then go to OpenAI.",
     "请先确认删除。": "Confirm the deletion first.",
     "请选择要删除的自定义模型。": "Select the custom models to remove.",
     "只能删除本工具添加的模型，默认 GPT 模型不会删除。": "Only models added by this tool can be removed. Default GPT models are not deleted.",

@@ -1048,6 +1048,31 @@ class ConfigStore:
             current[model] = {"provider_id": provider_id, "base_url": base_url}
         atomic_write(path, json.dumps({"models": current}, ensure_ascii=False, indent=2).encode())
 
+
+    def use_official(self, payload):
+        """Point the live default back at the official provider. Custom providers stay."""
+        if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+            raise ConfigError("请先确认，才会切回官方。", "confirmation_required")
+        with self.lock:
+            raw, revision, data, doc = self.snapshot()
+            if revision == "missing":
+                raise ConfigError("没有可修改的配置文件。", "invalid_config")
+            model = data.get("model") if isinstance(data.get("model"), str) else ""
+            if not model.startswith("gpt-"):
+                model = "gpt-5.4"
+            doc["model"] = model
+            doc["model_provider"] = "openai"
+            rendered = tomlkit.dumps(doc).encode("utf-8")
+            safety_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(4)
+            safety = self.backup_root / safety_id
+            safety.mkdir(mode=0o700)
+            shutil.copy2(self.path, safety / "config.toml", follow_symlinks=False)
+            atomic_write(self.path, rendered)
+            return {
+                "ok": True, "model": model, "model_provider": "openai", "safety_backup": safety_id,
+                "message": "已切回官方提供方。请完全退出 Codex（⌘Q）后再打开。下拉里的官方模型才会走 OpenAI。",
+            }
+
     def remove_models(self, payload):
         if not isinstance(payload, dict) or payload.get("confirmed") is not True:
             raise ConfigError("请先确认删除。", "confirmation_required")

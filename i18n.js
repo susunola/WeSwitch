@@ -1,6 +1,9 @@
 (() => {
   'use strict';
   const english = Object.freeze({
+    '切回官方': 'Use official',
+    '切回官方提供方。自定义提供方保留，但新请求不再发给它。': 'Switch back to the official provider. Custom providers stay, but new requests no longer go to them.',
+    '已切回官方提供方。请完全退出 Codex（⌘Q）后再打开。下拉里的官方模型才会走 OpenAI。': 'Switched back to the official provider. Fully quit Codex, then open it again. Official models in the picker then go to OpenAI.',
     '还没有模型。先获取列表并勾选一个，再测试连接。': 'No model yet. Fetch the list, check one, then test the connection.',
     '连接成功': 'Connected',
     '连接失败': 'Failed',

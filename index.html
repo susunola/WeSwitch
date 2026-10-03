@@ -1670,6 +1670,12 @@
         $('usage-button').addEventListener('click', usage);
         $('backup-select').addEventListener('change', updateControls);
         $('rollback-button').addEventListener('click', rollback);
+        $('official-button').addEventListener('click', async () => {
+          if (!window.confirm('切回官方提供方。自定义提供方保留，但新请求不再发给它。')) return;
+          const data = await api('/api/use-official', { body: { confirmed: true } });
+          text('backup-status', data.message || '已切回官方提供方。请完全退出 Codex（⌘Q）后再打开。下拉里的官方模型才会走 OpenAI。');
+          await loadState();
+        });
         $('model-search').addEventListener('input', renderModelOptions);
         $('model-search').addEventListener('keydown', (event) => {
           if (event.key === 'Enter') event.preventDefault();
@@ -2457,7 +2463,7 @@
             <div class="usage-meter" id="usage-meter" hidden></div>
           </section>
           <section class="card context-card"><h3 data-i18n>模型目录<span data-i18n class="pill">由你决定</span></h3><p data-i18n>桌面端选择器读的是模型目录和 models_cache.json。勾选“写入模型目录”才会把你的模型合并进去，并同步选择器缓存；原始文件始终先备份。</p><code data-i18n class="file-path" id="catalog-path">等待目录路径…</code></section>
-          <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><p class="field-hint" id="backup-policy"></p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
+          <section class="card context-card" id="backup-card"><h3 data-i18n>备份与还原<span data-i18n class="pill">可回滚</span></h3><p data-i18n>每次应用都会生成带哈希校验的备份。还原前，当前配置会再存一份新备份，所以还原本身也可以再撤销。</p><p class="field-hint" id="backup-policy"></p><select id="backup-select" aria-describedby="backup-hint" disabled><option data-i18n value="">暂无可用备份</option></select><p data-i18n id="backup-hint" class="field-hint">还原会把配置文件恢复为所选备份的内容；目录文件仅在该备份中包含时一起还原。</p><button data-i18n id="rollback-button" class="button" type="button" disabled><span data-i18n id="rollback-label">还原所选备份</span></button><button data-i18n id="official-button" class="button" type="button">切回官方</button><p data-i18n id="backup-status" class="field-hint" role="status" aria-live="polite">尚未还原。还原后请完全退出应用（⌘Q）再打开。</p></section>
           <p data-i18n id="remove-status" class="field-hint" hidden>尚未删除。</p>
           <div data-i18n class="connection-note"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg><p data-i18n><strong data-i18n>配置成功 ≠ 连接成功</strong><br>仅在点击获取并确认后请求服务商的 /models 列表；仅在点击测试连接并确认后发送一次最短请求。列表成功不证明 Responses 兼容性，配置成功也不代表模型可用。</p></div>
         </aside>
@@ -2489,7 +2495,7 @@
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-archive"/></svg><span data-i18n class="backup-heading">配置备份</span><span data-i18n id="backup-count" class="count-small" data-i18n-aria-label aria-label="备份数量">—</span><span data-i18n class="backup-summary-end"><span data-i18n>仅查看记录</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></span></summary>
         <div data-i18n class="backup-body"><p data-i18n class="backup-note">下面只列出本地服务返回的备份记录，不在这里执行恢复或删除；还原请用右侧「备份与还原」。时间按服务原始记录显示。</p><p data-i18n id="backups-empty" class="backup-empty">等待从本地服务读取…</p><ul id="backup-list" class="backup-list"></ul><p data-i18n class="backup-note">Codex 应用路径</p><code data-i18n class="file-path" id="app-path">等待本地状态…</code></div>
       </details>
-      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.14</span></footer>
+      <footer><p data-i18n class="footer-note"><svg class="icon" aria-hidden="true"><use href="#icon-lock"/></svg><span data-i18n>仅供本机使用，请勿发布或暴露到公网。获取列表时会把凭据发送到你填写的服务商（无认证模式除外）；仅点击应用才保存钥匙串和配置。预览不发送密钥，列表请求不调用模型生成；连接测试会真实发送一次最短请求，可能产生少量费用。本地 HTTP 不等于加密传输；会话令牌与密钥不写入浏览器本地存储。</span></p><span class="footer-signature">WeSwitch · v0.6.15</span></footer>
     </main>
   </div>
 </body>
